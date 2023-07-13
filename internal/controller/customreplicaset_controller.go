@@ -78,7 +78,11 @@ func (r *CustomReplicaSetReconciler) Reconcile(ctx context.Context, req ctrl.Req
 
 	updatedPodsMap := makePodsMap(&crs, childPods.Items)
 
+	// fmt.Println("ss", updatedPodsMap)
+	// fmt.Println("ewewr", crs.Status.PodsMap)
+
 	if crs.Status.CurrentReplicas != int32(len(updatedPodsMap)) || mapsAreDifferent(updatedPodsMap, crs.Status.PodsMap) {
+		// fmt.Println("MAPS ARE DIFFERENT")
 		crs.Status.PodsMap = updatedPodsMap
 		crs.Status.CurrentReplicas = int32(len(updatedPodsMap))
 		r.updateCRD(ctx, crs)
@@ -125,7 +129,7 @@ func (r *CustomReplicaSetReconciler) updateCRD(ctx context.Context, crs customre
 func makePodsMap(crs *customreplicasetv1.CustomReplicaSet, pods []corev1.Pod) map[string]customreplicasetv1.PodStatusInfo {
 	updatedPodsMap := make(map[string]customreplicasetv1.PodStatusInfo)
 	for _, pod := range pods {
-		if pod.Status.Phase == corev1.PodRunning || pod.Status.Phase == corev1.PodPending || pod.Status.Phase == corev1.PodSucceeded {
+		if pod.Status.Phase == corev1.PodRunning || pod.Status.Phase == corev1.PodPending {
 			var podStatusInfo customreplicasetv1.PodStatusInfo
 			podStatusInfo.Name = pod.Name
 			podStatusInfo.Status = string(pod.Status.Phase)
@@ -157,6 +161,7 @@ func (r *CustomReplicaSetReconciler) newPodForCR(cr *customreplicasetv1.CustomRe
 		},
 		// Define Pod Spec
 		Spec: corev1.PodSpec{
+			RestartPolicy: corev1.RestartPolicyNever,
 			// Define Container
 			Containers: []corev1.Container{{
 				Name:    "busybox",
