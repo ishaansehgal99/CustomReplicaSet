@@ -1,0 +1,6 @@
+apiVersion: customreplicaset.ishaan.microsoft/v1
+kind: CustomReplicaSet
+metadata: 
+  name: customreplicaset-sample
+spec: 
+  replicas: 3

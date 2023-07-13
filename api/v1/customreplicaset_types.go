@@ -18,7 +18,6 @@ package v1
 
 import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	v1 "k8s.io/client-go/applyconfigurations/core/v1"
 )
 
 // EDIT THIS FILE!  THIS IS SCAFFOLDING FOR YOU TO OWN!
@@ -40,7 +39,7 @@ type CustomReplicaSetSpec struct {
 	Replicas int32 `json:"replicas"`
 
 	// Stores Pod Spec used for creating new pods
-	Template v1.PodTemplateSpec `json:"template"`
+	// Template v1.PodTemplateSpec `json:"template"`
 }
 
 // CustomReplicaSetStatus defines the observed state of CustomReplicaSet
@@ -52,7 +51,7 @@ type CustomReplicaSetStatus struct {
 	CurrentReplicas int32 `json:"currentReplicas"`
 
 	// Desired replicas, should match spec.replicas
-	DesiredReplicas int32 `json:"desiredReplicas"`
+	// DesiredReplicas int32 `json:"desiredReplicas"`
 
 	// List of pod statuses
 	PodStatus []PodStatusInfo `json:"podStatus,omitempty"`
