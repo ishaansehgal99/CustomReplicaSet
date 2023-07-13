@@ -53,9 +53,9 @@ type CustomReplicaSetReconciler struct {
 // For more details, check Reconcile and its Result here:
 // - https://pkg.go.dev/sigs.k8s.io/controller-runtime@v0.15.0/pkg/reconcile
 func (r *CustomReplicaSetReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
-	_ = log.FromContext(ctx)
+	log := log.FromContext(ctx)
 
-	fmt.Println("Triggered Reconcile")
+	log.Info("Triggered Reconcile")
 
 	// Find the custom replica set instance
 	var crs customreplicasetv1.CustomReplicaSet
@@ -63,7 +63,7 @@ func (r *CustomReplicaSetReconciler) Reconcile(ctx context.Context, req ctrl.Req
 	// If we don't find it exit
 	if err := r.Get(ctx, req.NamespacedName, &crs); err != nil {
 		if errors.IsNotFound(err) {
-			fmt.Println(err, "Unable to fetch the custom replica set object")
+			log.Error(err, "Unable to fetch the custom replica set object")
 			return ctrl.Result{Requeue: false}, nil
 		}
 		return ctrl.Result{Requeue: false}, err
@@ -72,17 +72,16 @@ func (r *CustomReplicaSetReconciler) Reconcile(ctx context.Context, req ctrl.Req
 	// If we do find it, list all pods owned by it
 	var childPods corev1.PodList
 	if err := r.List(ctx, &childPods, client.InNamespace(req.Namespace)); err != nil {
-		fmt.Println(err, "Failed to list child pods")
+		log.Error(err, "Failed to list child pods")
 		return ctrl.Result{Requeue: false}, err
 	}
 
 	updatedPodsMap := makePodsMap(&crs, childPods.Items)
 
-	// fmt.Println("ss", updatedPodsMap)
-	// fmt.Println("ewewr", crs.Status.PodsMap)
+	// fmt.Println("updatedPodsMap", updatedPodsMap)
+	// fmt.Println("crs.Status.PodsMap", crs.Status.PodsMap)
 
 	if crs.Status.CurrentReplicas != int32(len(updatedPodsMap)) || mapsAreDifferent(updatedPodsMap, crs.Status.PodsMap) {
-		// fmt.Println("MAPS ARE DIFFERENT")
 		crs.Status.PodsMap = updatedPodsMap
 		crs.Status.CurrentReplicas = int32(len(updatedPodsMap))
 		r.updateCRD(ctx, crs)
@@ -108,7 +107,7 @@ func (r *CustomReplicaSetReconciler) Reconcile(ctx context.Context, req ctrl.Req
 		crs.Status.CurrentReplicas = int32(len(crs.Status.PodsMap))
 
 		if err := r.Create(ctx, newPod); err != nil {
-			fmt.Println("Unable to create new pod", err)
+			log.Error(err, "Unable to create new pod")
 			return ctrl.Result{Requeue: false}, err
 		}
 	}
@@ -135,7 +134,6 @@ func makePodsMap(crs *customreplicasetv1.CustomReplicaSet, pods []corev1.Pod) ma
 			podStatusInfo.Status = string(pod.Status.Phase)
 			// podStatusInfo.RestartCount = podStatus.Status.ContainerStatuses[0].RestartCount
 			// crs.Status.PodStatus = append(crs.Status.PodStatus, podStatusInfo)
-
 			updatedPodsMap[pod.Name] = podStatusInfo
 		}
 	}
