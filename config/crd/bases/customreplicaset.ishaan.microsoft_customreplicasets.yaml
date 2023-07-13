@@ -48,9 +48,8 @@ spec:
                 description: Current number of observed pods
                 format: int32
                 type: integer
-              podStatus:
-                description: List of pod statuses
-                items:
+              pods:
+                additionalProperties:
                   description: PodStatusInfo defines basic pod status information
                   properties:
                     name:
@@ -65,7 +64,8 @@ spec:
                   - restartCount
                   - status
                   type: object
-                type: array
+                description: Stores mapping of cluster pod names to podInfo
+                type: object
             required:
             - currentReplicas
             type: object

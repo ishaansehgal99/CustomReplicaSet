@@ -50,11 +50,11 @@ type CustomReplicaSetStatus struct {
 	// Current number of observed pods
 	CurrentReplicas int32 `json:"currentReplicas"`
 
-	// Desired replicas, should match spec.replicas
-	// DesiredReplicas int32 `json:"desiredReplicas"`
+	// Stores mapping of cluster pod names to podInfo
+	PodsMap map[string]PodStatusInfo `json:"pods,omitempty"`
 
 	// List of pod statuses
-	PodStatus []PodStatusInfo `json:"podStatus,omitempty"`
+	// PodStatus []PodStatusInfo `json:"podStatus,omitempty"`
 }
 
 //+kubebuilder:object:root=true

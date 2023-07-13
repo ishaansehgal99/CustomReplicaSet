@@ -55,6 +55,8 @@ type CustomReplicaSetReconciler struct {
 func (r *CustomReplicaSetReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	_ = log.FromContext(ctx)
 
+	fmt.Println("Triggered Reconcile")
+
 	// Find the custom replica set instance
 	var crs customreplicasetv1.CustomReplicaSet
 
@@ -74,35 +76,40 @@ func (r *CustomReplicaSetReconciler) Reconcile(ctx context.Context, req ctrl.Req
 		return ctrl.Result{Requeue: false}, err
 	}
 
-	// Clean up stale pods - this updates the state of CRD to be most up to date
-	// if cleanedPod := cleanupStalePods(crs, childPods.Items); cleanedPod {
-	// 	// If we had to remove pods update the CRD
-	// 	r.updateCRD(ctx, crs)
-	// }
-	cleanedPod := cleanupStalePods(crs, childPods.Items)
+	updatedPodsMap := makePodsMap(&crs, childPods.Items)
 
-	// Add new pods - this adds any pods to our local podinfo we had missed to add earlier
-	// if addedPod := addNewPods(crs, childPods.Items); addedPod {
-	// 	r.updateCRD(ctx, crs)
-	// }
-	addedPod := addNewPods(crs, childPods.Items)
-
-	if cleanedPod || addedPod {
+	if crs.Status.CurrentReplicas != int32(len(updatedPodsMap)) || mapsAreDifferent(updatedPodsMap, crs.Status.PodsMap) {
+		crs.Status.PodsMap = updatedPodsMap
+		crs.Status.CurrentReplicas = int32(len(updatedPodsMap))
 		r.updateCRD(ctx, crs)
+		return ctrl.Result{Requeue: true}, nil
 	}
+
+	fmt.Println("ISHAAN", crs.Status.CurrentReplicas, crs.Spec.Replicas)
 
 	for crs.Status.CurrentReplicas < crs.Spec.Replicas {
 		fmt.Println("Number of available pods is less than the replicas, need to create new pods")
 		fmt.Println("AvailablePods: ", crs.Status.CurrentReplicas, "Needed Pods", int(crs.Spec.Replicas))
 
-		newPod := newPodForCR(&crs)
+		newPod := r.newPodForCR(&crs)
+
+		var podStatusInfo customreplicasetv1.PodStatusInfo
+		podStatusInfo.Name = newPod.Name
+		podStatusInfo.Status = string(newPod.Status.Phase)
+		// podStatusInfo.RestartCount = podStatus.Status.ContainerStatuses[0].RestartCount
+		if crs.Status.PodsMap == nil {
+			crs.Status.PodsMap = make(map[string]customreplicasetv1.PodStatusInfo)
+		}
+		crs.Status.PodsMap[newPod.Name] = podStatusInfo
+		crs.Status.CurrentReplicas = int32(len(crs.Status.PodsMap))
+
 		if err := r.Create(ctx, newPod); err != nil {
 			fmt.Println("Unable to create new pod", err)
 			return ctrl.Result{Requeue: false}, err
 		}
 	}
 
-	// r.updateCRD(ctx, crs)
+	r.updateCRD(ctx, crs)
 
 	return ctrl.Result{}, nil
 }
@@ -115,58 +122,23 @@ func (r *CustomReplicaSetReconciler) updateCRD(ctx context.Context, crs customre
 	}
 }
 
-func addNewPods(crs customreplicasetv1.CustomReplicaSet, pods []corev1.Pod) bool {
-	addedPod := false
+func makePodsMap(crs *customreplicasetv1.CustomReplicaSet, pods []corev1.Pod) map[string]customreplicasetv1.PodStatusInfo {
+	updatedPodsMap := make(map[string]customreplicasetv1.PodStatusInfo)
 	for _, pod := range pods {
-		// Check if pod exists
 		if pod.Status.Phase == corev1.PodRunning || pod.Status.Phase == corev1.PodPending || pod.Status.Phase == corev1.PodSucceeded {
-			// Add this pod to CurrentReplicas and PodStatus
-			// Search through our local copy of pods to make sure it doesn't already exist
-			foundPod := false
-			for _, podStatus := range crs.Status.PodStatus {
-				if podStatus.Name == pod.Name {
-					foundPod = true
-				}
-			}
-			if !foundPod {
-				var podStatusInfo customreplicasetv1.PodStatusInfo
-				podStatusInfo.Name = pod.Name
-				podStatusInfo.Status = string(pod.Status.Phase)
-				// podStatusInfo.RestartCount = podStatus.Status.ContainerStatuses[0].RestartCount
+			var podStatusInfo customreplicasetv1.PodStatusInfo
+			podStatusInfo.Name = pod.Name
+			podStatusInfo.Status = string(pod.Status.Phase)
+			// podStatusInfo.RestartCount = podStatus.Status.ContainerStatuses[0].RestartCount
+			// crs.Status.PodStatus = append(crs.Status.PodStatus, podStatusInfo)
 
-				crs.Status.PodStatus = append(crs.Status.PodStatus, podStatusInfo)
-				crs.Status.CurrentReplicas++
-				addedPod = true
-			}
+			updatedPodsMap[pod.Name] = podStatusInfo
 		}
 	}
-	return addedPod
+	return updatedPodsMap
 }
 
-func cleanupStalePods(crs customreplicasetv1.CustomReplicaSet, pods []corev1.Pod) bool {
-	removedPod := false
-	for _, pod := range pods {
-		// Check if pod exists
-		if pod.Status.Phase == corev1.PodFailed || pod.Status.Phase == corev1.PodUnknown {
-			// Remove this pod from CurrentReplicas and PodStatus
-			// Search through our local copy of pods to remove the faulty pod
-			for j, podStatus := range crs.Status.PodStatus {
-				if podStatus.Name == pod.Name {
-					// Replace pod status with last element
-					crs.Status.PodStatus[j] = crs.Status.PodStatus[len(crs.Status.PodStatus)-1]
-					// Remove last element
-					crs.Status.PodStatus = crs.Status.PodStatus[:len(crs.Status.PodStatus)-1]
-					crs.Status.CurrentReplicas--
-					removedPod = true
-					break
-				}
-			}
-		}
-	}
-	return removedPod
-}
-
-func newPodForCR(cr *customreplicasetv1.CustomReplicaSet) *corev1.Pod {
+func (r *CustomReplicaSetReconciler) newPodForCR(cr *customreplicasetv1.CustomReplicaSet) *corev1.Pod {
 	// Create label obj
 	labels := map[string]string{
 		"customreplicaset": cr.Name,
@@ -176,7 +148,7 @@ func newPodForCR(cr *customreplicasetv1.CustomReplicaSet) *corev1.Pod {
 	timestamp := fmt.Sprintf("%d%d%d%d", t.Hour(), t.Minute(), t.Second(), t.Nanosecond())
 
 	// Create pod using K8 API
-	return &corev1.Pod{
+	newPod := &corev1.Pod{
 		//Define Pod Metadata
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      cr.Name + "-pod-" + timestamp,
@@ -193,6 +165,35 @@ func newPodForCR(cr *customreplicasetv1.CustomReplicaSet) *corev1.Pod {
 			}},
 		},
 	}
+	// Set the CustomReplicaSet instance as the owner and controller
+	if err := ctrl.SetControllerReference(cr, newPod, r.Scheme); err != nil {
+		fmt.Println("Could not set this instance to the customreplicaset controller")
+	}
+	return newPod
+}
+
+func mapsAreDifferent(map1, map2 map[string]customreplicasetv1.PodStatusInfo) bool {
+	// Check if the lengths of the maps are different
+	if len(map1) != len(map2) {
+		return true
+	}
+
+	// Iterate over each key-value pair in map1
+	for key, value := range map1 {
+		// Check if the corresponding key exists in map2
+		if map2Value, ok := map2[key]; ok {
+			// Compare the values of the key in both maps
+			if value != map2Value {
+				return true
+			}
+		} else {
+			// If the key is not present in map2, the maps are different
+			return true
+		}
+	}
+
+	// All key-value pairs are the same, maps are equal
+	return false
 }
 
 // func countAvailablePods(pods []corev1.Pod) int {
@@ -210,5 +211,6 @@ func newPodForCR(cr *customreplicasetv1.CustomReplicaSet) *corev1.Pod {
 func (r *CustomReplicaSetReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&customreplicasetv1.CustomReplicaSet{}).
+		Owns(&corev1.Pod{}).
 		Complete(r)
 }
