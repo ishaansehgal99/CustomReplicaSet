@@ -3,4 +3,29 @@ kind: CustomReplicaSet
 metadata: 
   name: customreplicaset-sample
 spec: 
-  replicas: 3
+  replicas: 2
+  template:
+    apiVersion: v1
+    kind: Pod
+    metadata:
+      labels:
+        app: my-app
+    spec:
+      restartPolicy: Never
+      containers:
+      - name: busybox
+        image: busybox
+        command: ["sleep", "3600"]
+  
+  # upgradedTemplate:
+  #   apiVersion: v1
+  #   kind: Pod
+  #   metadata:
+  #     labels:
+  #       app: my-app2
+  #   spec:
+  #     restartPolicy: Never
+  #     containers:
+  #     - name: busybox
+  #       image: busybox:latest
+  #       command: ["sleep", "3600"]

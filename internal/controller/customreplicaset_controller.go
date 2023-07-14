@@ -76,98 +76,66 @@ func (r *CustomReplicaSetReconciler) Reconcile(ctx context.Context, req ctrl.Req
 		return ctrl.Result{Requeue: false}, err
 	}
 
-	updatedPodsMap := makePodsMap(&crs, childPods.Items)
+	// fmt.Println("ISHAAN", crs.Spec.Replicas)
 
-	// fmt.Println("updatedPodsMap", updatedPodsMap)
-	// fmt.Println("crs.Status.PodsMap", crs.Status.PodsMap)
+	availablePods := countAvailablePods(childPods.Items)
 
-	if crs.Status.CurrentReplicas != int32(len(updatedPodsMap)) || mapsAreDifferent(updatedPodsMap, crs.Status.PodsMap) {
-		crs.Status.PodsMap = updatedPodsMap
-		crs.Status.CurrentReplicas = int32(len(updatedPodsMap))
-		r.updateCRD(ctx, crs)
-		return ctrl.Result{Requeue: true}, nil
-	}
-
-	fmt.Println("ISHAAN", crs.Status.CurrentReplicas, crs.Spec.Replicas)
-
-	for crs.Status.CurrentReplicas < crs.Spec.Replicas {
-		fmt.Println("Number of available pods is less than the replicas, need to create new pods")
-		fmt.Println("AvailablePods: ", crs.Status.CurrentReplicas, "Needed Pods", int(crs.Spec.Replicas))
-
-		newPod := r.newPodForCR(&crs)
-
-		var podStatusInfo customreplicasetv1.PodStatusInfo
-		podStatusInfo.Name = newPod.Name
-		podStatusInfo.Status = string(newPod.Status.Phase)
-		// podStatusInfo.RestartCount = podStatus.Status.ContainerStatuses[0].RestartCount
-		if crs.Status.PodsMap == nil {
-			crs.Status.PodsMap = make(map[string]customreplicasetv1.PodStatusInfo)
+	if availablePods < int(crs.Spec.Replicas) {
+		for availablePods < int(crs.Spec.Replicas) {
+			newPod := r.newPodForCR(&crs)
+			if err := r.Create(ctx, newPod); err != nil {
+				log.Error(err, "Unable to create new pod")
+				return ctrl.Result{Requeue: false}, err
+			}
+			fmt.Println("Created Pod")
+			availablePods++
 		}
-		crs.Status.PodsMap[newPod.Name] = podStatusInfo
-		crs.Status.CurrentReplicas = int32(len(crs.Status.PodsMap))
-
-		if err := r.Create(ctx, newPod); err != nil {
-			log.Error(err, "Unable to create new pod")
-			return ctrl.Result{Requeue: false}, err
+	} else if availablePods > int(crs.Spec.Replicas) {
+		for _, pod := range childPods.Items {
+			if pod.Status.Phase == corev1.PodRunning || pod.Status.Phase == corev1.PodPending {
+				if err := r.Delete(ctx, &pod); err != nil {
+					log.Error(err, "Unable to delete pod")
+					return ctrl.Result{Requeue: false}, err
+				}
+				fmt.Println("Delete Pod")
+				availablePods--
+				if availablePods == int(crs.Spec.Replicas) {
+					break
+				}
+			}
 		}
 	}
-
-	r.updateCRD(ctx, crs)
 
 	return ctrl.Result{}, nil
 }
 
-func (r *CustomReplicaSetReconciler) updateCRD(ctx context.Context, crs customreplicasetv1.CustomReplicaSet) {
+func (r *CustomReplicaSetReconciler) updateCRD(ctx context.Context, crs *customreplicasetv1.CustomReplicaSet) {
 	// Use the local object crs to update the global customreplicasetstatus
-	err := r.Status().Update(ctx, &crs)
+	err := r.Status().Update(ctx, crs)
 	if err != nil {
 		fmt.Println(err, "Failed to upgrade state of the cluster")
 	}
 }
 
-func makePodsMap(crs *customreplicasetv1.CustomReplicaSet, pods []corev1.Pod) map[string]customreplicasetv1.PodStatusInfo {
-	updatedPodsMap := make(map[string]customreplicasetv1.PodStatusInfo)
-	for _, pod := range pods {
-		if pod.Status.Phase == corev1.PodRunning || pod.Status.Phase == corev1.PodPending {
-			var podStatusInfo customreplicasetv1.PodStatusInfo
-			podStatusInfo.Name = pod.Name
-			podStatusInfo.Status = string(pod.Status.Phase)
-			// podStatusInfo.RestartCount = podStatus.Status.ContainerStatuses[0].RestartCount
-			// crs.Status.PodStatus = append(crs.Status.PodStatus, podStatusInfo)
-			updatedPodsMap[pod.Name] = podStatusInfo
-		}
-	}
-	return updatedPodsMap
-}
-
 func (r *CustomReplicaSetReconciler) newPodForCR(cr *customreplicasetv1.CustomReplicaSet) *corev1.Pod {
 	// Create label obj
 	labels := map[string]string{
-		"customreplicaset": cr.Name,
+		"custom": cr.Name,
 	}
 
 	t := time.Now()
 	timestamp := fmt.Sprintf("%d%d%d%d", t.Hour(), t.Minute(), t.Second(), t.Nanosecond())
 
-	// Create pod using K8 API
+	// Create pod using the template spec provided in the CustomReplicaSet
 	newPod := &corev1.Pod{
-		//Define Pod Metadata
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      cr.Name + "-pod-" + timestamp,
 			Namespace: cr.Namespace,
 			Labels:    labels,
 		},
-		// Define Pod Spec
-		Spec: corev1.PodSpec{
-			RestartPolicy: corev1.RestartPolicyNever,
-			// Define Container
-			Containers: []corev1.Container{{
-				Name:    "busybox",
-				Image:   "busybox",
-				Command: []string{"sleep", "3600"},
-			}},
-		},
+		Spec: cr.Spec.Template.Spec,
 	}
+
 	// Set the CustomReplicaSet instance as the owner and controller
 	if err := ctrl.SetControllerReference(cr, newPod, r.Scheme); err != nil {
 		fmt.Println("Could not set this instance to the customreplicaset controller")
@@ -175,40 +143,16 @@ func (r *CustomReplicaSetReconciler) newPodForCR(cr *customreplicasetv1.CustomRe
 	return newPod
 }
 
-func mapsAreDifferent(map1, map2 map[string]customreplicasetv1.PodStatusInfo) bool {
-	// Check if the lengths of the maps are different
-	if len(map1) != len(map2) {
-		return true
-	}
-
-	// Iterate over each key-value pair in map1
-	for key, value := range map1 {
-		// Check if the corresponding key exists in map2
-		if map2Value, ok := map2[key]; ok {
-			// Compare the values of the key in both maps
-			if value != map2Value {
-				return true
-			}
-		} else {
-			// If the key is not present in map2, the maps are different
-			return true
+func countAvailablePods(pods []corev1.Pod) int {
+	available := 0
+	for _, pod := range pods {
+		// Check if pod exists
+		if pod.Status.Phase == corev1.PodRunning || pod.Status.Phase == corev1.PodPending {
+			available++
 		}
 	}
-
-	// All key-value pairs are the same, maps are equal
-	return false
+	return available
 }
-
-// func countAvailablePods(pods []corev1.Pod) int {
-// 	available := 0
-// 	for _, pod := range pods {
-// 		// Check if pod exists
-// 		if pod.Status.Phase == corev1.PodRunning || pod.Status.Phase == corev1.PodPending {
-// 			available++
-// 		}
-// 	}
-// 	return available
-// }
 
 // SetupWithManager sets up the controller with the Manager.
 func (r *CustomReplicaSetReconciler) SetupWithManager(mgr ctrl.Manager) error {

@@ -17,6 +17,7 @@ limitations under the License.
 package v1
 
 import (
+	v1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
@@ -39,7 +40,10 @@ type CustomReplicaSetSpec struct {
 	Replicas int32 `json:"replicas"`
 
 	// Stores Pod Spec used for creating new pods
-	// Template v1.PodTemplateSpec `json:"template"`
+	Template v1.PodTemplateSpec `json:"template"`
+
+	// Stores Pod Spec used for creating upgraded pods
+	// UpgradedTemplate v1.PodTemplateSpec `json:"upgradedTemplate"`
 }
 
 // CustomReplicaSetStatus defines the observed state of CustomReplicaSet
@@ -48,10 +52,10 @@ type CustomReplicaSetStatus struct {
 	// Important: Run "make" to regenerate code after modifying this file
 
 	// Current number of observed pods
-	CurrentReplicas int32 `json:"currentReplicas"`
+	// CurrentReplicas int32 `json:"currentReplicas"`
 
 	// Stores mapping of cluster pod names to podInfo
-	PodsMap map[string]PodStatusInfo `json:"pods,omitempty"`
+	// PodsMap map[string]PodStatusInfo `json:"pods,omitempty"`
 
 	// List of pod statuses
 	// PodStatus []PodStatusInfo `json:"podStatus,omitempty"`
