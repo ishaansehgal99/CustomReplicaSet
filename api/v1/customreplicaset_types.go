@@ -17,6 +17,7 @@ limitations under the License.
 package v1
 
 import (
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
@@ -38,8 +39,11 @@ type CustomReplicaSetSpec struct {
 	// Keeps track of the number of replicas
 	Replicas int32 `json:"replicas"`
 
+	// Stores the upgrade strategy
+	Strategy UpgradeStrategy `json:"strategy,omitempty"`
+
 	// Stores Pod Spec used for creating new pods
-	// Template v1.PodTemplateSpec `json:"template"`
+	Template corev1.PodTemplateSpec `json:"template"`
 }
 
 // CustomReplicaSetStatus defines the observed state of CustomReplicaSet
@@ -55,6 +59,11 @@ type CustomReplicaSetStatus struct {
 
 	// List of pod statuses
 	// PodStatus []PodStatusInfo `json:"podStatus,omitempty"`
+}
+
+type UpgradeStrategy struct {
+	// Number of pods that are going to be upgraded
+	Partiton int32 `json:"partition"`
 }
 
 //+kubebuilder:object:root=true

@@ -149,7 +149,7 @@ func (r *CustomReplicaSetReconciler) newPodForCR(cr *customreplicasetv1.CustomRe
 	t := time.Now()
 	timestamp := fmt.Sprintf("%d%d%d%d", t.Hour(), t.Minute(), t.Second(), t.Nanosecond())
 
-	// Create pod using K8 API
+	podTemplate := cr.Spec.Template.DeepCopy()
 	newPod := &corev1.Pod{
 		//Define Pod Metadata
 		ObjectMeta: metav1.ObjectMeta{
@@ -158,15 +158,7 @@ func (r *CustomReplicaSetReconciler) newPodForCR(cr *customreplicasetv1.CustomRe
 			Labels:    labels,
 		},
 		// Define Pod Spec
-		Spec: corev1.PodSpec{
-			RestartPolicy: corev1.RestartPolicyNever,
-			// Define Container
-			Containers: []corev1.Container{{
-				Name:    "busybox",
-				Image:   "busybox",
-				Command: []string{"sleep", "3600"},
-			}},
-		},
+		Spec: podTemplate.Spec,
 	}
 	// Set the CustomReplicaSet instance as the owner and controller
 	if err := ctrl.SetControllerReference(cr, newPod, r.Scheme); err != nil {
