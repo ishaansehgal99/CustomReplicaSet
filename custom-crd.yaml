@@ -21,6 +21,8 @@ spec:
                 type: object
                 x-kubernetes-embedded-resource: true
                 x-kubernetes-preserve-unknown-fields: true
+              upgradedReplicas: 
+                type: integer
               # upgradedTemplate:
               #   type: object
               #   x-kubernetes-embedded-resource: true

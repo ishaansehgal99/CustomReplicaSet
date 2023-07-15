@@ -42,7 +42,12 @@ type CustomReplicaSetSpec struct {
 	// Stores Pod Spec used for creating new pods
 	Template v1.PodTemplateSpec `json:"template"`
 
+	// Keep track of the number of upgraded replicas
+	UpgradedReplicas int32 `json:"upgradedReplicas,omitempty"`
+
 	// Stores Pod Spec used for creating upgraded pods
+	// Removed because including in CRD resulted in
+	// This error message: metadata.annotations: Too long: must have at most 262144 bytes
 	// UpgradedTemplate v1.PodTemplateSpec `json:"upgradedTemplate"`
 }
 

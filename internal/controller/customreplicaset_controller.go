@@ -19,6 +19,7 @@ package controller
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
@@ -78,46 +79,124 @@ func (r *CustomReplicaSetReconciler) Reconcile(ctx context.Context, req ctrl.Req
 
 	// fmt.Println("ISHAAN", crs.Spec.Replicas)
 
-	availablePods := countAvailablePods(childPods.Items)
+	availableStdPods, availableUpgPods := countAvailablePods(childPods.Items)
+	totalAvailablePods := availableStdPods + availableUpgPods
 
-	if availablePods < int(crs.Spec.Replicas) {
-		for availablePods < int(crs.Spec.Replicas) {
-			newPod := r.newPodForCR(&crs)
+	if totalAvailablePods < int(crs.Spec.Replicas) {
+		for totalAvailablePods < int(crs.Spec.Replicas) {
+			var newPod *corev1.Pod
+			// Create any missing upgraded pods first
+			if availableUpgPods < int(crs.Spec.UpgradedReplicas) {
+				newPod = r.newPodForCR(&crs, true)
+				availableUpgPods++
+			} else {
+				newPod = r.newPodForCR(&crs, false)
+				availableStdPods++
+			}
+
 			if err := r.Create(ctx, newPod); err != nil {
 				log.Error(err, "Unable to create new pod")
-				return ctrl.Result{Requeue: false}, err
+				return ctrl.Result{Requeue: true}, err
 			}
 			fmt.Println("Created Pod")
-			availablePods++
+			totalAvailablePods++
 		}
-	} else if availablePods > int(crs.Spec.Replicas) {
+	} else if totalAvailablePods > int(crs.Spec.Replicas) {
+		podsToDelete := totalAvailablePods - int(crs.Spec.Replicas)
+		upgPodsToDelete := availableUpgPods - int(crs.Spec.UpgradedReplicas)
+		stdPodsToDelete := podsToDelete - upgPodsToDelete
+
 		for _, pod := range childPods.Items {
 			if pod.Status.Phase == corev1.PodRunning || pod.Status.Phase == corev1.PodPending {
+				if strings.Contains(pod.ObjectMeta.Name, "upgraded") {
+					if upgPodsToDelete > 0 {
+						upgPodsToDelete--
+					} else {
+						continue
+					}
+				} else {
+					if stdPodsToDelete > 0 {
+						stdPodsToDelete--
+					} else {
+						continue
+					}
+				}
+
 				if err := r.Delete(ctx, &pod); err != nil {
 					log.Error(err, "Unable to delete pod")
-					return ctrl.Result{Requeue: false}, err
+					return ctrl.Result{Requeue: true}, err
 				}
 				fmt.Println("Delete Pod")
-				availablePods--
-				if availablePods == int(crs.Spec.Replicas) {
+				totalAvailablePods--
+				if totalAvailablePods == int(crs.Spec.Replicas) {
 					break
 				}
 			}
 		}
+	} else {
+		// Check if we need to upgrade or downgrade any pods
+		podsToUpgrade := int(crs.Spec.UpgradedReplicas) - availableUpgPods
+		if podsToUpgrade > 0 {
+			for _, pod := range childPods.Items {
+				if pod.Status.Phase == corev1.PodRunning || pod.Status.Phase == corev1.PodPending {
+					// Upgrade a standard pod
+					if !strings.Contains(pod.ObjectMeta.Name, "upgraded") {
+						if err := r.Delete(ctx, &pod); err != nil {
+							log.Error(err, "Unable to delete pod")
+							return ctrl.Result{Requeue: true}, err
+						}
+
+						newPod := r.newPodForCR(&crs, true)
+						if err := r.Create(ctx, newPod); err != nil {
+							log.Error(err, "Unable to create new pod")
+							return ctrl.Result{Requeue: true}, err
+						}
+
+						fmt.Println("Upgraded Pod")
+
+						podsToUpgrade--
+						if podsToUpgrade == 0 {
+							break
+						}
+					}
+				}
+			}
+		} else if podsToUpgrade < 0 {
+			podsToDowngrade := podsToUpgrade * -1
+
+			for _, pod := range childPods.Items {
+				if pod.Status.Phase == corev1.PodRunning || pod.Status.Phase == corev1.PodPending {
+					// Downgrade an upgraded pod to std
+					if strings.Contains(pod.ObjectMeta.Name, "upgraded") {
+						if err := r.Delete(ctx, &pod); err != nil {
+							log.Error(err, "Unable to delete pod")
+							return ctrl.Result{Requeue: true}, err
+						}
+
+						newPod := r.newPodForCR(&crs, false)
+						if err := r.Create(ctx, newPod); err != nil {
+							log.Error(err, "Unable to create new pod")
+							return ctrl.Result{Requeue: true}, err
+						}
+
+						fmt.Println("Downgraded Pod")
+
+						podsToDowngrade--
+						if podsToDowngrade == 0 {
+							break
+						}
+					}
+				}
+			}
+
+		}
+
 	}
 
 	return ctrl.Result{}, nil
 }
 
-func (r *CustomReplicaSetReconciler) updateCRD(ctx context.Context, crs *customreplicasetv1.CustomReplicaSet) {
-	// Use the local object crs to update the global customreplicasetstatus
-	err := r.Status().Update(ctx, crs)
-	if err != nil {
-		fmt.Println(err, "Failed to upgrade state of the cluster")
-	}
-}
-
-func (r *CustomReplicaSetReconciler) newPodForCR(cr *customreplicasetv1.CustomReplicaSet) *corev1.Pod {
+func (r *CustomReplicaSetReconciler) newPodForCR(cr *customreplicasetv1.CustomReplicaSet, upgraded bool) *corev1.Pod {
 	// Create label obj
 	labels := map[string]string{
 		"custom": cr.Name,
@@ -126,14 +205,29 @@ func (r *CustomReplicaSetReconciler) newPodForCR(cr *customreplicasetv1.CustomRe
 	t := time.Now()
 	timestamp := fmt.Sprintf("%d%d%d%d", t.Hour(), t.Minute(), t.Second(), t.Nanosecond())
 
+	var newPodName string
+	if upgraded {
+		newPodName = cr.Name + "-pod-upgraded-" + timestamp
+	} else {
+		newPodName = cr.Name + "-pod-" + timestamp
+	}
+
 	// Create pod using the template spec provided in the CustomReplicaSet
 	newPod := &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      cr.Name + "-pod-" + timestamp,
+			Name:      newPodName,
 			Namespace: cr.Namespace,
 			Labels:    labels,
 		},
 		Spec: cr.Spec.Template.Spec,
+	}
+
+	for i := range newPod.Spec.Containers {
+		if upgraded {
+			newPod.Spec.Containers[i].Image = "busybox:latest"
+		} else {
+			newPod.Spec.Containers[i].Image = "busybox"
+		}
 	}
 
 	// Set the CustomReplicaSet instance as the owner and controller
@@ -143,15 +237,21 @@ func (r *CustomReplicaSetReconciler) newPodForCR(cr *customreplicasetv1.CustomRe
 	return newPod
 }
 
-func countAvailablePods(pods []corev1.Pod) int {
-	available := 0
+func countAvailablePods(pods []corev1.Pod) (int, int) {
+	availableStdPods, availableUpgPods := 0, 0
 	for _, pod := range pods {
 		// Check if pod exists
 		if pod.Status.Phase == corev1.PodRunning || pod.Status.Phase == corev1.PodPending {
-			available++
+			container := pod.Spec.Containers[0]
+			if strings.HasSuffix(container.Image, ":latest") {
+				availableUpgPods++
+			} else {
+				availableStdPods++
+			}
 		}
 	}
-	return available
+	fmt.Println("Current available standard pods", availableStdPods, "upgraded pods", availableUpgPods)
+	return availableStdPods, availableUpgPods
 }
 
 // SetupWithManager sets up the controller with the Manager.

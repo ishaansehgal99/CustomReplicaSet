@@ -7531,6 +7531,10 @@ spec:
                     - containers
                     type: object
                 type: object
+              upgradedReplicas:
+                description: Keep track of the number of upgraded replicas
+                format: int32
+                type: integer
             required:
             - replicas
             - template
