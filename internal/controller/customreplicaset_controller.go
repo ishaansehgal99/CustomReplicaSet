@@ -31,6 +31,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
+	"github.com/go-logr/logr"
 	customreplicasetv1 "github.com/ishaansehgal99/CustomReplicaSet/api/v1"
 )
 
@@ -59,141 +60,198 @@ func (r *CustomReplicaSetReconciler) Reconcile(ctx context.Context, req ctrl.Req
 	log.Info("Triggered Reconcile")
 
 	// Find the custom replica set instance
-	var crs customreplicasetv1.CustomReplicaSet
-
-	// If we don't find it exit
-	if err := r.Get(ctx, req.NamespacedName, &crs); err != nil {
-		if errors.IsNotFound(err) {
-			log.Error(err, "Unable to fetch the custom replica set object")
-			return ctrl.Result{Requeue: false}, nil
-		}
+	crs, err := r.findCustomReplicaSet(ctx, req, log)
+	if err != nil {
 		return ctrl.Result{Requeue: false}, err
 	}
 
 	// If we do find it, list all pods owned by it
-	var childPods corev1.PodList
-	if err := r.List(ctx, &childPods, client.InNamespace(req.Namespace)); err != nil {
-		log.Error(err, "Failed to list child pods")
+	childPods, err := r.findChildPods(ctx, req, log)
+	if err != nil {
 		return ctrl.Result{Requeue: false}, err
 	}
-
-	// fmt.Println("ISHAAN", crs.Spec.Replicas)
 
 	availableStdPods, availableUpgPods := countAvailablePods(childPods.Items)
 	totalAvailablePods := availableStdPods + availableUpgPods
 
-	if totalAvailablePods < int(crs.Spec.Replicas) {
-		for totalAvailablePods < int(crs.Spec.Replicas) {
-			var newPod *corev1.Pod
-			// Create any missing upgraded pods first
-			if availableUpgPods < int(crs.Spec.UpgradedReplicas) {
-				newPod = r.newPodForCR(&crs, true)
-				availableUpgPods++
-			} else {
-				newPod = r.newPodForCR(&crs, false)
-				availableStdPods++
-			}
+	if err := r.managePods(ctx, totalAvailablePods, availableStdPods, availableUpgPods, &crs, childPods, log); err != nil {
+		return ctrl.Result{Requeue: true}, err
+	}
 
-			if err := r.Create(ctx, newPod); err != nil {
-				log.Error(err, "Unable to create new pod")
-				return ctrl.Result{Requeue: true}, err
-			}
-			fmt.Println("Created Pod")
-			totalAvailablePods++
+	return ctrl.Result{Requeue: false}, err
+}
+
+func (r *CustomReplicaSetReconciler) findCustomReplicaSet(ctx context.Context, req ctrl.Request, log logr.Logger) (customreplicasetv1.CustomReplicaSet, error) {
+	var crs customreplicasetv1.CustomReplicaSet
+	if err := r.Get(ctx, req.NamespacedName, &crs); err != nil {
+		if errors.IsNotFound(err) {
+			log.Error(err, "Unable to fetch the custom replica set object")
+		}
+		return crs, err
+	}
+	return crs, nil
+}
+
+func (r *CustomReplicaSetReconciler) findChildPods(ctx context.Context, req ctrl.Request, log logr.Logger) (corev1.PodList, error) {
+	var childPods corev1.PodList
+	if err := r.List(ctx, &childPods, client.InNamespace(req.Namespace)); err != nil {
+		log.Error(err, "Failed to list child pods")
+		return childPods, err
+	}
+	return childPods, nil
+}
+
+func (r *CustomReplicaSetReconciler) managePods(ctx context.Context, totalAvailablePods, availableStdPods, availableUpgPods int, crs *customreplicasetv1.CustomReplicaSet, childPods corev1.PodList, log logr.Logger) error {
+	if totalAvailablePods < int(crs.Spec.Replicas) {
+		if err := r.createPods(ctx, totalAvailablePods, availableStdPods, availableUpgPods, crs, log); err != nil {
+			log.Error(err, "Failed to create pods")
+			return err
 		}
 	} else if totalAvailablePods > int(crs.Spec.Replicas) {
-		podsToDelete := totalAvailablePods - int(crs.Spec.Replicas)
-		upgPodsToDelete := availableUpgPods - int(crs.Spec.UpgradedReplicas)
-		stdPodsToDelete := podsToDelete - upgPodsToDelete
+		if err := r.deletePods(ctx, totalAvailablePods, availableStdPods, availableUpgPods, crs, childPods, log); err != nil {
+			log.Error(err, "Failed to delete pods")
+			return err
+		}
+	} else {
+		if err := r.upgradeOrDowngradePods(ctx, availableStdPods, availableUpgPods, crs, childPods, log); err != nil {
+			log.Error(err, "Failed to upgrade or downgrade pods")
+			return err
+		}
+	}
+	return nil
+}
 
-		for _, pod := range childPods.Items {
-			if pod.Status.Phase == corev1.PodRunning || pod.Status.Phase == corev1.PodPending {
-				if strings.Contains(pod.ObjectMeta.Name, "upgraded") {
-					if upgPodsToDelete > 0 {
-						upgPodsToDelete--
-					} else {
-						continue
-					}
+func (r *CustomReplicaSetReconciler) createPods(ctx context.Context, totalPods, stdPods, upgPods int, cr *customreplicasetv1.CustomReplicaSet, log logr.Logger) error {
+	for totalPods < int(cr.Spec.Replicas) {
+		var newPod *corev1.Pod
+		// Create any missing upgraded pods first
+		if upgPods < int(cr.Spec.UpgradedReplicas) {
+			newPod = r.newPodForCR(cr, true)
+			upgPods++
+		} else {
+			newPod = r.newPodForCR(cr, false)
+			stdPods++
+		}
+
+		if err := r.Create(ctx, newPod); err != nil {
+			log.Error(err, "Unable to create new pod")
+			return err
+		}
+		fmt.Println("Created Pod")
+		totalPods++
+	}
+	return nil
+}
+
+func (r *CustomReplicaSetReconciler) deletePods(ctx context.Context, totalPods, stdPods, upgPods int, cr *customreplicasetv1.CustomReplicaSet, childPods corev1.PodList, log logr.Logger) error {
+	podsToDelete := totalPods - int(cr.Spec.Replicas)
+	upgPodsToDelete := upgPods - int(cr.Spec.UpgradedReplicas)
+	stdPodsToDelete := podsToDelete - upgPodsToDelete
+
+	for _, pod := range childPods.Items {
+		if pod.Status.Phase == corev1.PodRunning || pod.Status.Phase == corev1.PodPending {
+			if strings.Contains(pod.ObjectMeta.Name, "upgraded") {
+				if upgPodsToDelete > 0 {
+					upgPodsToDelete--
 				} else {
-					if stdPodsToDelete > 0 {
-						stdPodsToDelete--
-					} else {
-						continue
-					}
+					continue
 				}
+			} else {
+				if stdPodsToDelete > 0 {
+					stdPodsToDelete--
+				} else {
+					continue
+				}
+			}
 
+			if err := r.Delete(ctx, &pod); err != nil {
+				log.Error(err, "Unable to delete pod")
+				return err
+			}
+			fmt.Println("Delete Pod")
+			totalPods--
+			if totalPods == int(cr.Spec.Replicas) {
+				break
+			}
+		}
+	}
+	return nil
+}
+
+func (r *CustomReplicaSetReconciler) upgradeOrDowngradePods(ctx context.Context, stdPods, upgPods int, cr *customreplicasetv1.CustomReplicaSet, childPods corev1.PodList, log logr.Logger) error {
+	// Check if we need to upgrade or downgrade any pods
+	podsToUpgrade := int(cr.Spec.UpgradedReplicas) - upgPods
+	if podsToUpgrade > 0 {
+		if err := r.upgradePods(ctx, podsToUpgrade, cr, childPods, log); err != nil {
+			log.Error(err, "Unable to upgrade pod")
+			return err
+		}
+
+	} else if podsToUpgrade < 0 {
+		if err := r.downgradePods(ctx, podsToUpgrade, cr, childPods, log); err != nil {
+			log.Error(err, "Unable to downgrade pod")
+			return err
+		}
+	}
+	return nil
+}
+
+func (r *CustomReplicaSetReconciler) upgradePods(ctx context.Context, podsToUpgrade int, cr *customreplicasetv1.CustomReplicaSet, childPods corev1.PodList, log logr.Logger) error {
+	for _, pod := range childPods.Items {
+		if pod.Status.Phase == corev1.PodRunning || pod.Status.Phase == corev1.PodPending {
+			// Upgrade a standard pod
+			if !strings.Contains(pod.ObjectMeta.Name, "upgraded") {
 				if err := r.Delete(ctx, &pod); err != nil {
 					log.Error(err, "Unable to delete pod")
-					return ctrl.Result{Requeue: true}, err
+					return err
 				}
-				fmt.Println("Delete Pod")
-				totalAvailablePods--
-				if totalAvailablePods == int(crs.Spec.Replicas) {
+
+				newPod := r.newPodForCR(cr, true)
+				if err := r.Create(ctx, newPod); err != nil {
+					log.Error(err, "Unable to create new pod")
+					return err
+				}
+
+				fmt.Println("Upgraded Pod")
+
+				podsToUpgrade--
+				if podsToUpgrade == 0 {
 					break
 				}
 			}
 		}
-	} else {
-		// Check if we need to upgrade or downgrade any pods
-		podsToUpgrade := int(crs.Spec.UpgradedReplicas) - availableUpgPods
-		if podsToUpgrade > 0 {
-			for _, pod := range childPods.Items {
-				if pod.Status.Phase == corev1.PodRunning || pod.Status.Phase == corev1.PodPending {
-					// Upgrade a standard pod
-					if !strings.Contains(pod.ObjectMeta.Name, "upgraded") {
-						if err := r.Delete(ctx, &pod); err != nil {
-							log.Error(err, "Unable to delete pod")
-							return ctrl.Result{Requeue: true}, err
-						}
-
-						newPod := r.newPodForCR(&crs, true)
-						if err := r.Create(ctx, newPod); err != nil {
-							log.Error(err, "Unable to create new pod")
-							return ctrl.Result{Requeue: true}, err
-						}
-
-						fmt.Println("Upgraded Pod")
-
-						podsToUpgrade--
-						if podsToUpgrade == 0 {
-							break
-						}
-					}
-				}
-			}
-		} else if podsToUpgrade < 0 {
-			podsToDowngrade := podsToUpgrade * -1
-
-			for _, pod := range childPods.Items {
-				if pod.Status.Phase == corev1.PodRunning || pod.Status.Phase == corev1.PodPending {
-					// Downgrade an upgraded pod to std
-					if strings.Contains(pod.ObjectMeta.Name, "upgraded") {
-						if err := r.Delete(ctx, &pod); err != nil {
-							log.Error(err, "Unable to delete pod")
-							return ctrl.Result{Requeue: true}, err
-						}
-
-						newPod := r.newPodForCR(&crs, false)
-						if err := r.Create(ctx, newPod); err != nil {
-							log.Error(err, "Unable to create new pod")
-							return ctrl.Result{Requeue: true}, err
-						}
-
-						fmt.Println("Downgraded Pod")
-
-						podsToDowngrade--
-						if podsToDowngrade == 0 {
-							break
-						}
-					}
-				}
-			}
-
-		}
-
 	}
+	return nil
+}
 
-	return ctrl.Result{}, nil
+func (r *CustomReplicaSetReconciler) downgradePods(ctx context.Context, podsToUpgrade int, cr *customreplicasetv1.CustomReplicaSet, childPods corev1.PodList, log logr.Logger) error {
+	podsToDowngrade := podsToUpgrade * -1
+
+	for _, pod := range childPods.Items {
+		if pod.Status.Phase == corev1.PodRunning || pod.Status.Phase == corev1.PodPending {
+			// Downgrade an upgraded pod to std
+			if strings.Contains(pod.ObjectMeta.Name, "upgraded") {
+				if err := r.Delete(ctx, &pod); err != nil {
+					log.Error(err, "Unable to delete pod")
+					return err
+				}
+
+				newPod := r.newPodForCR(cr, false)
+				if err := r.Create(ctx, newPod); err != nil {
+					log.Error(err, "Unable to create new pod")
+					return err
+				}
+
+				fmt.Println("Downgraded Pod")
+
+				podsToDowngrade--
+				if podsToDowngrade == 0 {
+					break
+				}
+			}
+		}
+	}
+	return nil
 }
 
 func (r *CustomReplicaSetReconciler) newPodForCR(cr *customreplicasetv1.CustomReplicaSet, upgraded bool) *corev1.Pod {
