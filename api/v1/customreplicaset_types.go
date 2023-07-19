@@ -43,7 +43,7 @@ type CustomReplicaSetSpec struct {
 	Template v1.PodTemplateSpec `json:"template"`
 
 	// Keep track of the number of upgraded replicas
-	UpgradedReplicas int32 `json:"upgradedReplicas,omitempty"`
+	Partition int32 `json:"partition,omitempty"`
 
 	// Stores Pod Spec used for creating upgraded pods
 	// Removed because including in CRD resulted in

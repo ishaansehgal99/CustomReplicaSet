@@ -5,18 +5,17 @@ metadata:
 spec: 
   replicas: 10
   template:
-    apiVersion: v1
-    kind: Pod
-    metadata:
-      labels:
-        app: my-app
+    # metadata:
+    #   labels:
+    #     app: my-app
     spec:
       restartPolicy: Never
       containers:
       - name: busybox
         image: busybox
         command: ["sleep", "3600"]
-  upgradedReplicas: 2  # Number of upgraded pods
+  partition: 2  # Number of upgraded pods
+
   # upgradedTemplate:
   #   apiVersion: v1
   #   kind: Pod
