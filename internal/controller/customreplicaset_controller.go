@@ -201,7 +201,13 @@ func (r *CustomReplicaSetReconciler) manageControllerRevisionHistory(ctx context
 	if existingRev, err := r.searchRevisionHistory(controllerRevisions, newRevisionHash); err != nil {
 		return err
 	} else if existingRev != nil {
-		existingRev.Revision = latestRevisionNumber + 1
+		// If the found revision isn't the latest, update it to be
+		if existingRev.Revision != latestRevisionNumber {
+			existingRev.Revision = latestRevisionNumber + 1
+			if err := r.Update(ctx, existingRev); err != nil {
+				return err
+			}
+		}
 	} else {
 		if err := r.createControllerRevision(ctx, cr, controllerRevisions, newRevisionData, latestRevisionNumber); err != nil {
 			fmt.Println("Failed to create new controller revision")
