@@ -17,7 +17,6 @@ limitations under the License.
 package v1
 
 import (
-	appv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
@@ -32,10 +31,10 @@ type PodStatusInfo struct {
 	RestartCount int32  `json:"restartCount"`
 }
 
-type Revision struct {
-	CRSpecHash         string                    `json:"crspechash"`
-	ControllerRevision *appv1.ControllerRevision `json:"controllerrevision"`
-}
+// type Revision struct {
+// 	CRSpecHash         string                    `json:"crspechash"`
+// 	ControllerRevision *appv1.ControllerRevision `json:"controllerrevision"`
+// }
 
 // CustomReplicaSetSpec defines the desired state of CustomReplicaSet
 type CustomReplicaSetSpec struct {
