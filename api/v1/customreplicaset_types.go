@@ -32,6 +32,11 @@ type PodStatusInfo struct {
 	RestartCount int32  `json:"restartCount"`
 }
 
+type Revision struct {
+	CRSpecHash         string                    `json:"crspechash"`
+	ControllerRevision *appv1.ControllerRevision `json:"controllerrevision"`
+}
+
 // CustomReplicaSetSpec defines the desired state of CustomReplicaSet
 type CustomReplicaSetSpec struct {
 	// INSERT ADDITIONAL SPEC FIELDS - desired state of cluster
@@ -60,8 +65,11 @@ type CustomReplicaSetStatus struct {
 	// INSERT ADDITIONAL STATUS FIELD - define observed state of cluster
 	// Important: Run "make" to regenerate code after modifying this file
 
+	// Latest Hash in Controller Revision
+	// LatestRevision Revision `json:"latestRevision"`
+
 	// Current template hashes - maps from hash(CR.Spec) -> *ControllerRevision
-	TemplateHashes map[string]*appv1.ControllerRevision `json:"templateHashes"`
+	// TemplateHashes map[string]*appv1.ControllerRevision `json:"templateHashes"`
 
 	// Current number of observed pods
 	// CurrentReplicas int32 `json:"currentReplicas"`
