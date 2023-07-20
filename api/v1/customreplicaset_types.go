@@ -60,7 +60,7 @@ type CustomReplicaSetStatus struct {
 	// INSERT ADDITIONAL STATUS FIELD - define observed state of cluster
 	// Important: Run "make" to regenerate code after modifying this file
 
-	// Current template hashes - maps from hash(PodTemplate) -> *PodTemplate
+	// Current template hashes - maps from hash(CR.Spec) -> *ControllerRevision
 	TemplateHashes map[string]*appv1.ControllerRevision `json:"templateHashes"`
 
 	// Current number of observed pods
