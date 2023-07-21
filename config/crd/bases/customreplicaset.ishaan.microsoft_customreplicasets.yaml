@@ -34,8 +34,16 @@ spec:
           spec:
             description: CustomReplicaSetSpec defines the desired state of CustomReplicaSet
             properties:
+              partition:
+                description: Keep track of the number of upgraded replicas
+                format: int32
+                type: integer
               replicas:
                 description: Keeps track of the number of replicas
+                format: int32
+                type: integer
+              revisionHistoryLimit:
+                description: Limit on Controller Revision History Length
                 format: int32
                 type: integer
               template:
@@ -7531,12 +7539,10 @@ spec:
                     - containers
                     type: object
                 type: object
-              upgradedReplicas:
-                description: Keep track of the number of upgraded replicas
-                format: int32
-                type: integer
             required:
+            - partition
             - replicas
+            - revisionHistoryLimit
             - template
             type: object
           status:

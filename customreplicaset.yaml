@@ -3,20 +3,20 @@ kind: CustomReplicaSet
 metadata: 
   name: customreplicaset-sample
 spec: 
-  replicas: 10
+  replicas: 8
   template:
-    apiVersion: v1
-    kind: Pod
-    metadata:
-      labels:
-        app: my-app
+    # metadata:
+    #   labels:
+    #     app: my-app
     spec:
       restartPolicy: Never
       containers:
       - name: busybox
-        image: busybox
+        image: busybox:latest
         command: ["sleep", "3600"]
-  upgradedReplicas: 2  # Number of upgraded pods
+  partition: 5  # Number of upgraded pods
+  revisionHistoryLimit: 20 # Max revision history stored
+
   # upgradedTemplate:
   #   apiVersion: v1
   #   kind: Pod

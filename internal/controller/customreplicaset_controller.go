@@ -18,10 +18,15 @@ package controller
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/json"
 	"fmt"
+	"sort"
+	"strconv"
 	"strings"
 	"time"
 
+	v1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
@@ -29,6 +34,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
 	"github.com/go-logr/logr"
@@ -74,11 +80,236 @@ func (r *CustomReplicaSetReconciler) Reconcile(ctx context.Context, req ctrl.Req
 	availableStdPods, availableUpgPods := countAvailablePods(childPods.Items)
 	totalAvailablePods := availableStdPods + availableUpgPods
 
+	// Apply any necessary updates to controller revision history
+	if err := r.manageControllerRevisionHistory(ctx, &crs); err != nil {
+		return ctrl.Result{Requeue: true}, err
+	}
+
 	if err := r.managePods(ctx, totalAvailablePods, availableStdPods, availableUpgPods, &crs, childPods, log); err != nil {
 		return ctrl.Result{Requeue: true}, err
 	}
 
 	return ctrl.Result{Requeue: false}, err
+}
+
+// Create a new ControllerRevision and add it to history
+func (r *CustomReplicaSetReconciler) createControllerRevision(ctx context.Context, cr *customreplicasetv1.CustomReplicaSet, controllerRevisions *v1.ControllerRevisionList, revisionData runtime.RawExtension, latestRevisionNumber int64) error {
+	t := time.Now()
+	newRevision := v1.ControllerRevision{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      fmt.Sprintf("%s-controller-revision-%d", cr.Name, t.UnixNano()),
+			Namespace: cr.Namespace,
+			Labels: map[string]string{
+				"owner": cr.Name,
+			},
+		},
+		Data:     revisionData,
+		Revision: latestRevisionNumber + 1,
+	}
+
+	// Delete oldest revision if over revision limit
+	if len(controllerRevisions.Items) >= int(cr.Spec.RevisionHistoryLimit) {
+		oldestRevision, err := r.getControllerRevisionAtIndex(ctx, cr, controllerRevisions, 0)
+		if err != nil {
+			return err
+		}
+
+		if err := r.Delete(ctx, oldestRevision); err != nil {
+			return err
+		}
+	}
+
+	// Create Revision
+	if err := r.Create(ctx, &newRevision); err != nil {
+		return err
+	}
+	// Set CR as its owner
+	if err := controllerutil.SetControllerReference(cr, &newRevision, r.Scheme); err != nil {
+		return err
+	}
+
+	// Add latest revision number to CR Labels
+	if err := r.updateCRRevisionLabel(ctx, cr, &newRevision); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+// Update 'revisionNumber' label of the CustomReplicaSet
+func (r *CustomReplicaSetReconciler) updateCRRevisionLabel(ctx context.Context, cr *customreplicasetv1.CustomReplicaSet, latestRevision *v1.ControllerRevision) error {
+	if latestRevision == nil {
+		return fmt.Errorf("invalid controller revision to update CR label with")
+	}
+	if cr.Labels == nil {
+		cr.Labels = map[string]string{}
+	}
+
+	cr.Labels["latestRevisionName"] = latestRevision.Name
+	cr.Labels["latestRevisionNumber"] = strconv.FormatInt(latestRevision.Revision, 10)
+	if err := r.Update(ctx, cr); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func hashControllerRevisionData(revisionData runtime.RawExtension) (string, error) {
+	jsonData, err := json.Marshal(revisionData)
+	if err != nil {
+		return "", err
+	}
+
+	// Compute SHA256 hash of PodTemplate
+	hash := sha256.Sum256(jsonData)
+
+	// Convert the hash to hexadecimal string
+	hashString := fmt.Sprintf("%x", hash)
+
+	return hashString, nil
+}
+
+func (r *CustomReplicaSetReconciler) getAllControllerRevisions(ctx context.Context, cr *customreplicasetv1.CustomReplicaSet, sorted bool) (*v1.ControllerRevisionList, error) {
+	controllerRevisions := &v1.ControllerRevisionList{}
+	if err := r.List(ctx, controllerRevisions, client.InNamespace(cr.Namespace), client.MatchingLabels{"owner": cr.Name}); err != nil {
+		return nil, err
+	}
+
+	// Sort the ControllerRevisions by Revision
+	if sorted {
+		sort.Slice(controllerRevisions.Items, func(i, j int) bool {
+			return controllerRevisions.Items[i].Revision < controllerRevisions.Items[j].Revision
+		})
+	}
+
+	return controllerRevisions, nil
+}
+
+func (r *CustomReplicaSetReconciler) manageControllerRevisionHistory(ctx context.Context, cr *customreplicasetv1.CustomReplicaSet) error {
+	jsonSpec, err := convertCRSpecToJson(cr.Spec)
+	if err != nil {
+		return err
+	}
+
+	newRevisionData := runtime.RawExtension{Raw: jsonSpec}
+	newRevisionHash, err := hashControllerRevisionData(newRevisionData)
+	if err != nil {
+		return err
+	}
+
+	cachedRevision := &v1.ControllerRevision{}
+	cachedRevisionHash := ""
+	if cachedRevisionName, ok := cr.Labels["latestRevisionName"]; ok {
+		if err := r.Get(ctx, client.ObjectKey{Namespace: cr.Namespace, Name: cachedRevisionName}, cachedRevision); err != nil {
+			fmt.Println("Cached label for revision name is invalid, need to perform search for latest revision")
+		}
+
+		cachedRevisionHash, err = hashControllerRevisionData(cachedRevision.Data)
+		if err != nil {
+			fmt.Println("Failed to generate hash for CR labeled controller revision data")
+			return err
+		}
+	}
+
+	// Search if the revision we are trying to create has been cached in the cr, or already exists
+	// in the revision history, if so update that revision history entry to be the latest,
+	// if not create and append a new revision entry
+	if cachedRevisionHash != newRevisionHash {
+		controllerRevisions, err := r.getAllControllerRevisions(ctx, cr, true)
+		if err != nil {
+			return err
+		}
+
+		_, latestRevisionNumber, err := r.getLatestRevision(ctx, cr, controllerRevisions)
+		if err != nil {
+			return err
+		}
+
+		if existingRev, err := searchRevisionHistory(controllerRevisions, newRevisionHash); err != nil {
+			return err
+		} else if existingRev != nil {
+			// Update the found matching revision to be the latest
+			err := r.updateRevisionToLatest(ctx, cr, existingRev, latestRevisionNumber)
+			if err != nil {
+				fmt.Println("Failed to update existing found revision to be the latest")
+			}
+		} else {
+			if err := r.createControllerRevision(ctx, cr, controllerRevisions, newRevisionData, latestRevisionNumber); err != nil {
+				fmt.Println("Failed to create new controller revision")
+				return err
+			}
+		}
+	}
+
+	return nil
+}
+
+func (r *CustomReplicaSetReconciler) updateRevisionToLatest(ctx context.Context, cr *customreplicasetv1.CustomReplicaSet, existingRev *v1.ControllerRevision, latestRevisionNumber int64) error {
+	if existingRev.Revision != latestRevisionNumber {
+		existingRev.Revision = latestRevisionNumber + 1
+		if err := r.Update(ctx, existingRev); err != nil {
+			return err
+		}
+		if err := r.updateCRRevisionLabel(ctx, cr, existingRev); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func searchRevisionHistory(controllerRevList *v1.ControllerRevisionList, targetHash string) (*v1.ControllerRevision, error) {
+	for _, revision := range controllerRevList.Items {
+		revisionHash, err := hashControllerRevisionData(revision.Data)
+		if err != nil {
+			return nil, err
+		}
+		if revisionHash == targetHash {
+			return &revision, nil
+		}
+	}
+	return nil, nil
+}
+
+func (r *CustomReplicaSetReconciler) getLatestRevision(ctx context.Context, cr *customreplicasetv1.CustomReplicaSet, controllerRevisions *v1.ControllerRevisionList) (*v1.ControllerRevision, int64, error) {
+	latestRevision, err := r.getControllerRevisionAtIndex(ctx, cr, controllerRevisions, -1)
+	if err != nil {
+		return nil, -1, err
+	}
+
+	if latestRevision == nil {
+		return nil, 0, nil
+	}
+	return latestRevision, latestRevision.Revision, nil
+}
+
+func convertCRSpecToJson(spec customreplicasetv1.CustomReplicaSetSpec) ([]byte, error) {
+	jsonSpec, err := json.Marshal(spec)
+	if err != nil {
+		fmt.Println("Failed to convert CustomReplicaSet spec to json")
+		return nil, err
+	}
+	return jsonSpec, nil
+}
+
+// Get the x-indexed oldest ControllerRevisionHistory Obj
+func (r *CustomReplicaSetReconciler) getControllerRevisionAtIndex(ctx context.Context, cr *customreplicasetv1.CustomReplicaSet, controllerRevisions *v1.ControllerRevisionList, index int) (*v1.ControllerRevision, error) {
+	if len(controllerRevisions.Items) == 0 {
+		fmt.Println("No controller revisions created yet")
+		return nil, nil
+	} else if index < -1 || index >= len(controllerRevisions.Items) {
+		fmt.Println("Invalid revision history index requested")
+		return nil, fmt.Errorf("invalid index requested, out of revision history range")
+	}
+
+	// Return the latest ControllerRevision Object
+	if index == -1 {
+		latestRevision := &controllerRevisions.Items[len(controllerRevisions.Items)-1]
+		return latestRevision, nil
+	}
+
+	// Return the ControllerRevision at the specified index
+	revision := &controllerRevisions.Items[index]
+	return revision, nil
 }
 
 func (r *CustomReplicaSetReconciler) findCustomReplicaSet(ctx context.Context, req ctrl.Request, log logr.Logger) (customreplicasetv1.CustomReplicaSet, error) {
@@ -125,7 +356,7 @@ func (r *CustomReplicaSetReconciler) createPods(ctx context.Context, totalPods, 
 	for totalPods < int(cr.Spec.Replicas) {
 		var newPod *corev1.Pod
 		// Create any missing upgraded pods first
-		if upgPods < int(cr.Spec.UpgradedReplicas) {
+		if upgPods < int(cr.Spec.Partition) {
 			newPod = r.newPodForCR(cr, true)
 			upgPods++
 		} else {
@@ -145,7 +376,7 @@ func (r *CustomReplicaSetReconciler) createPods(ctx context.Context, totalPods, 
 
 func (r *CustomReplicaSetReconciler) deletePods(ctx context.Context, totalPods, stdPods, upgPods int, cr *customreplicasetv1.CustomReplicaSet, childPods corev1.PodList, log logr.Logger) error {
 	podsToDelete := totalPods - int(cr.Spec.Replicas)
-	upgPodsToDelete := upgPods - int(cr.Spec.UpgradedReplicas)
+	upgPodsToDelete := upgPods - int(cr.Spec.Partition)
 	stdPodsToDelete := podsToDelete - upgPodsToDelete
 
 	for _, pod := range childPods.Items {
@@ -180,7 +411,7 @@ func (r *CustomReplicaSetReconciler) deletePods(ctx context.Context, totalPods, 
 
 func (r *CustomReplicaSetReconciler) upgradeOrDowngradePods(ctx context.Context, stdPods, upgPods int, cr *customreplicasetv1.CustomReplicaSet, childPods corev1.PodList, log logr.Logger) error {
 	// Check if we need to upgrade or downgrade any pods
-	podsToUpgrade := int(cr.Spec.UpgradedReplicas) - upgPods
+	podsToUpgrade := int(cr.Spec.Partition) - upgPods
 	if podsToUpgrade > 0 {
 		if err := r.upgradePods(ctx, podsToUpgrade, cr, childPods, log); err != nil {
 			log.Error(err, "Unable to upgrade pod")
