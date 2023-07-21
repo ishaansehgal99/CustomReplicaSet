@@ -19,6 +19,7 @@ package controller
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"path/filepath"
 	"testing"
 
@@ -82,6 +83,48 @@ var _ = BeforeSuite(func() {
 	Expect(k8sClient).NotTo(BeNil())
 
 })
+
+type BadJSON struct {
+	metav1.TypeMeta // Include this to add the GetObjectKind() method
+}
+
+func (b BadJSON) MarshalJSON() ([]byte, error) {
+	return nil, errors.New("this is a marshal error")
+}
+
+func (b *BadJSON) DeepCopyObject() runtime.Object {
+	return &BadJSON{}
+}
+
+func TestHashControllerRevisionData(t *testing.T) {
+	t.Run("should hash the revision data successfully", func(t *testing.T) {
+		// Define ControllerRevision data
+		revisionData := runtime.RawExtension{
+			Raw: []byte(`{"foo":"bar"}`),
+		}
+
+		// Call function to test
+		hash, err := hashControllerRevisionData(revisionData)
+
+		// Define the expected result (I've pre-computed the hash for {"foo":"bar"} here)
+		expectedHash := "7a38bf81f383f69433ad6e900d35b3e2385593f76a7b7ab5d4355b8ba41ee24b"
+
+		assert.NoError(t, err)
+		assert.Equal(t, expectedHash, hash)
+	})
+
+	t.Run("should return an error when marshalling fails", func(t *testing.T) {
+		// Define ControllerRevision data with unmarshallable data
+		revisionData := runtime.RawExtension{
+			Object: &BadJSON{}, // This type will fail to marshal
+		}
+
+		// Call function to test
+		_, err := hashControllerRevisionData(revisionData)
+
+		assert.Error(t, err)
+	})
+}
 
 func TestConvertCRSpecToJson(t *testing.T) {
 	scheme := runtime.NewScheme()
