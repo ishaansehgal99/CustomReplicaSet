@@ -86,6 +86,14 @@ func TestFindCustomReplicaSet(t *testing.T) {
 	scheme := runtime.NewScheme()
 	_ = customreplicasetv1.AddToScheme(scheme)
 
+	// Create test request
+	req := reconcile.Request{
+		NamespacedName: types.NamespacedName{
+			Name:      "test-crs",
+			Namespace: "default",
+		},
+	}
+
 	t.Run("should find the custom replica set", func(t *testing.T) {
 		// Create test CustomReplicaSet Object
 		customReplicaSet := &customreplicasetv1.CustomReplicaSet{
@@ -105,14 +113,6 @@ func TestFindCustomReplicaSet(t *testing.T) {
 			Scheme: scheme,
 		}
 
-		// Create test request
-		req := reconcile.Request{
-			NamespacedName: types.NamespacedName{
-				Namespace: "default",
-				Name:      "test-crs",
-			},
-		}
-
 		// Call function to test
 		crs, err := reconciler.findCustomReplicaSet(context.Background(), req, logger)
 
@@ -128,14 +128,6 @@ func TestFindCustomReplicaSet(t *testing.T) {
 		reconciler := &CustomReplicaSetReconciler{
 			Client: client,
 			Scheme: scheme,
-		}
-
-		// Create test request
-		req := reconcile.Request{
-			NamespacedName: types.NamespacedName{
-				Name:      "test-crs",
-				Namespace: "default",
-			},
 		}
 
 		_, err := reconciler.findCustomReplicaSet(context.Background(), req, logr.Discard())
