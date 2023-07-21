@@ -128,15 +128,25 @@ func (r *CustomReplicaSetReconciler) createControllerRevision(ctx context.Contex
 		return err
 	}
 
+	// Add latest revision number to CR Labels
+	if err := r.updateCRRevisionLabel(ctx, cr, &newRevision); err != nil {
+		return err
+	}
+
 	return nil
 }
 
 // Update 'revisionNumber' label of the CustomReplicaSet
-func (r *CustomReplicaSetReconciler) updateCRRevisionNumLabel(ctx context.Context, cr *customreplicasetv1.CustomReplicaSet, revisionNumber int64) error {
+func (r *CustomReplicaSetReconciler) updateCRRevisionLabel(ctx context.Context, cr *customreplicasetv1.CustomReplicaSet, latestRevision *v1.ControllerRevision) error {
+	if latestRevision == nil {
+		return fmt.Errorf("invalid controller revision to update CR label with")
+	}
 	if cr.Labels == nil {
 		cr.Labels = map[string]string{}
 	}
-	cr.Labels["revisionNumber"] = strconv.FormatInt(revisionNumber, 10)
+
+	cr.Labels["latestRevisionName"] = latestRevision.Name
+	cr.Labels["latestRevisionNumber"] = strconv.FormatInt(latestRevision.Revision, 10)
 	if err := r.Update(ctx, cr); err != nil {
 		return err
 	}
@@ -192,21 +202,40 @@ func (r *CustomReplicaSetReconciler) manageControllerRevisionHistory(ctx context
 		return err
 	}
 
-	latestRevisionNumber, err := r.getLatestRevisionNumber(ctx, cr, controllerRevisions)
+	_, latestRevisionNumber, err := r.getLatestRevision(ctx, cr, controllerRevisions)
 	if err != nil {
 		return err
 	}
 
-	// If controller revision hash is stored, update it to be the new latest revision and return
-	if existingRev, err := r.searchRevisionHistory(controllerRevisions, newRevisionHash); err != nil {
+	cachedRevision := &v1.ControllerRevision{}
+	cachedRevisionHash := ""
+	if cachedRevisionName, ok := cr.Labels["latestRevisionName"]; ok {
+		if err := r.Get(ctx, client.ObjectKey{Namespace: cr.Namespace, Name: cachedRevisionName}, cachedRevision); err != nil {
+			fmt.Println("Cached label for revision name is invalid, need to perform search for latest revision")
+		}
+
+		cachedRevisionHash, err = hashControllerRevisionData(cachedRevision.Data)
+		if err != nil {
+			fmt.Println("Failed to generate hash for CR labeled controller revision data")
+			return err
+		}
+	}
+
+	// Search if the revision we are trying to create has been cached in the cr, or already exists
+	// in the revision history, if so update that revision history entry to be the latest,
+	// if not create and append a new revision entry
+	if cachedRevisionHash == newRevisionHash {
+		err := r.updateRevisionToLatest(ctx, cr, cachedRevision, latestRevisionNumber)
+		if err != nil {
+			fmt.Println("Failed to update CR cached revision to be the latest")
+		}
+	} else if existingRev, err := searchRevisionHistory(controllerRevisions, newRevisionHash); err != nil {
 		return err
 	} else if existingRev != nil {
-		// If the found revision isn't the latest, update it to be
-		if existingRev.Revision != latestRevisionNumber {
-			existingRev.Revision = latestRevisionNumber + 1
-			if err := r.Update(ctx, existingRev); err != nil {
-				return err
-			}
+		// Update the found matching revision to be the latest
+		err := r.updateRevisionToLatest(ctx, cr, existingRev, latestRevisionNumber)
+		if err != nil {
+			fmt.Println("Failed to update existing found revision to be the latest")
 		}
 	} else {
 		if err := r.createControllerRevision(ctx, cr, controllerRevisions, newRevisionData, latestRevisionNumber); err != nil {
@@ -215,15 +244,23 @@ func (r *CustomReplicaSetReconciler) manageControllerRevisionHistory(ctx context
 		}
 	}
 
-	// Add latest revision number to CR Labels
-	if err := r.updateCRRevisionNumLabel(ctx, cr, latestRevisionNumber); err != nil {
-		return err
-	}
-
 	return nil
 }
 
-func (r *CustomReplicaSetReconciler) searchRevisionHistory(controllerRevList *v1.ControllerRevisionList, targetHash string) (*v1.ControllerRevision, error) {
+func (r *CustomReplicaSetReconciler) updateRevisionToLatest(ctx context.Context, cr *customreplicasetv1.CustomReplicaSet, existingRev *v1.ControllerRevision, latestRevisionNumber int64) error {
+	if existingRev.Revision != latestRevisionNumber {
+		existingRev.Revision = latestRevisionNumber + 1
+		if err := r.Update(ctx, existingRev); err != nil {
+			return err
+		}
+		if err := r.updateCRRevisionLabel(ctx, cr, existingRev); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func searchRevisionHistory(controllerRevList *v1.ControllerRevisionList, targetHash string) (*v1.ControllerRevision, error) {
 	for _, revision := range controllerRevList.Items {
 		revisionHash, err := hashControllerRevisionData(revision.Data)
 		if err != nil {
@@ -236,16 +273,16 @@ func (r *CustomReplicaSetReconciler) searchRevisionHistory(controllerRevList *v1
 	return nil, nil
 }
 
-func (r *CustomReplicaSetReconciler) getLatestRevisionNumber(ctx context.Context, cr *customreplicasetv1.CustomReplicaSet, controllerRevisions *v1.ControllerRevisionList) (int64, error) {
+func (r *CustomReplicaSetReconciler) getLatestRevision(ctx context.Context, cr *customreplicasetv1.CustomReplicaSet, controllerRevisions *v1.ControllerRevisionList) (*v1.ControllerRevision, int64, error) {
 	latestRevision, err := r.getControllerRevisionAtIndex(ctx, cr, controllerRevisions, -1)
 	if err != nil {
-		return -1, err
+		return nil, -1, err
 	}
 
 	if latestRevision == nil {
-		return 0, nil
+		return nil, 0, nil
 	}
-	return latestRevision.Revision, nil
+	return latestRevision, latestRevision.Revision, nil
 }
 
 func convertCRSpecToJson(spec customreplicasetv1.CustomReplicaSetSpec) ([]byte, error) {
