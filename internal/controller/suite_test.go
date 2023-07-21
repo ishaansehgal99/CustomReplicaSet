@@ -18,6 +18,7 @@ package controller
 
 import (
 	"context"
+	"encoding/json"
 	"path/filepath"
 	"testing"
 
@@ -26,6 +27,7 @@ import (
 	. "github.com/onsi/gomega"
 	"github.com/stretchr/testify/assert"
 
+	v1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
@@ -80,6 +82,48 @@ var _ = BeforeSuite(func() {
 	Expect(k8sClient).NotTo(BeNil())
 
 })
+
+func TestConvertCRSpecToJson(t *testing.T) {
+	scheme := runtime.NewScheme()
+	_ = customreplicasetv1.AddToScheme(scheme)
+
+	t.Run("should convert cr spec to json", func(t *testing.T) {
+		// Create test CustomReplicaSetSpec Object
+		spec := customreplicasetv1.CustomReplicaSetSpec{
+			Replicas:             10,
+			Partition:            5,
+			RevisionHistoryLimit: 20,
+			Template: v1.PodTemplateSpec{
+				Spec: v1.PodSpec{
+					RestartPolicy: "Never",
+					Containers: []v1.Container{
+						{
+							Name:    "busybox",
+							Image:   "busybox:latest",
+							Command: []string{"sleep", "3600"},
+						},
+					},
+				},
+			},
+		}
+
+		// Convert the spec to JSON
+		jsonSpec, err := convertCRSpecToJson(spec)
+
+		// There should be no error
+		assert.NoError(t, err)
+
+		// Now unmarshal the jsonSpec back to a CustomReplicaSetSpec object
+		var unmarshaledSpec customreplicasetv1.CustomReplicaSetSpec
+		err = json.Unmarshal(jsonSpec, &unmarshaledSpec)
+
+		// There should be no error
+		assert.NoError(t, err)
+
+		// The unmarshaledSpec should be same as original spec
+		assert.Equal(t, spec, unmarshaledSpec)
+	})
+}
 
 func TestFindCustomReplicaSet(t *testing.T) {
 	logger := zap.New(zap.UseDevMode(true))
