@@ -17,18 +17,26 @@ limitations under the License.
 package controller
 
 import (
+	"context"
 	"path/filepath"
 	"testing"
 
+	"github.com/go-logr/logr"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+	"github.com/stretchr/testify/assert"
 
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/rest"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 	"sigs.k8s.io/controller-runtime/pkg/envtest"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
+	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	customreplicasetv1 "github.com/ishaansehgal99/CustomReplicaSet/api/v1"
 	//+kubebuilder:scaffold:imports
@@ -72,6 +80,68 @@ var _ = BeforeSuite(func() {
 	Expect(k8sClient).NotTo(BeNil())
 
 })
+
+func TestFindCustomReplicaSet(t *testing.T) {
+	logger := zap.New(zap.UseDevMode(true))
+	scheme := runtime.NewScheme()
+	_ = customreplicasetv1.AddToScheme(scheme)
+
+	t.Run("should find the custom replica set", func(t *testing.T) {
+		// Create test CustomReplicaSet Object
+		customReplicaSet := &customreplicasetv1.CustomReplicaSet{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "test-crs",
+				Namespace: "default",
+			},
+			Spec: customreplicasetv1.CustomReplicaSetSpec{},
+		}
+
+		// Mock Client
+		client := fake.NewClientBuilder().WithScheme(scheme).WithRuntimeObjects(customReplicaSet).Build()
+
+		// Create test reconciler
+		reconciler := &CustomReplicaSetReconciler{
+			Client: client,
+			Scheme: scheme,
+		}
+
+		// Create test request
+		req := reconcile.Request{
+			NamespacedName: types.NamespacedName{
+				Namespace: "default",
+				Name:      "test-crs",
+			},
+		}
+
+		// Call function to test
+		crs, err := reconciler.findCustomReplicaSet(context.Background(), req, logger)
+
+		assert.NoError(t, err)
+		assert.Equal(t, "test-crs", crs.Name)
+	})
+
+	t.Run("should return an error when the custom replica set does not exist", func(t *testing.T) {
+		// Mock Client
+		client := fake.NewClientBuilder().WithScheme(scheme).Build()
+
+		// Create test reconciler
+		reconciler := &CustomReplicaSetReconciler{
+			Client: client,
+			Scheme: scheme,
+		}
+
+		// Create test request
+		req := reconcile.Request{
+			NamespacedName: types.NamespacedName{
+				Name:      "test-crs",
+				Namespace: "default",
+			},
+		}
+
+		_, err := reconciler.findCustomReplicaSet(context.Background(), req, logr.Discard())
+		assert.Error(t, err)
+	})
+}
 
 var _ = AfterSuite(func() {
 	By("tearing down the test environment")
