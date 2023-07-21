@@ -197,16 +197,6 @@ func (r *CustomReplicaSetReconciler) manageControllerRevisionHistory(ctx context
 		return err
 	}
 
-	controllerRevisions, err := r.getAllControllerRevisions(ctx, cr, true)
-	if err != nil {
-		return err
-	}
-
-	_, latestRevisionNumber, err := r.getLatestRevision(ctx, cr, controllerRevisions)
-	if err != nil {
-		return err
-	}
-
 	cachedRevision := &v1.ControllerRevision{}
 	cachedRevisionHash := ""
 	if cachedRevisionName, ok := cr.Labels["latestRevisionName"]; ok {
@@ -224,23 +214,30 @@ func (r *CustomReplicaSetReconciler) manageControllerRevisionHistory(ctx context
 	// Search if the revision we are trying to create has been cached in the cr, or already exists
 	// in the revision history, if so update that revision history entry to be the latest,
 	// if not create and append a new revision entry
-	if cachedRevisionHash == newRevisionHash {
-		err := r.updateRevisionToLatest(ctx, cr, cachedRevision, latestRevisionNumber)
+	if cachedRevisionHash != newRevisionHash {
+		controllerRevisions, err := r.getAllControllerRevisions(ctx, cr, true)
 		if err != nil {
-			fmt.Println("Failed to update CR cached revision to be the latest")
-		}
-	} else if existingRev, err := searchRevisionHistory(controllerRevisions, newRevisionHash); err != nil {
-		return err
-	} else if existingRev != nil {
-		// Update the found matching revision to be the latest
-		err := r.updateRevisionToLatest(ctx, cr, existingRev, latestRevisionNumber)
-		if err != nil {
-			fmt.Println("Failed to update existing found revision to be the latest")
-		}
-	} else {
-		if err := r.createControllerRevision(ctx, cr, controllerRevisions, newRevisionData, latestRevisionNumber); err != nil {
-			fmt.Println("Failed to create new controller revision")
 			return err
+		}
+
+		_, latestRevisionNumber, err := r.getLatestRevision(ctx, cr, controllerRevisions)
+		if err != nil {
+			return err
+		}
+
+		if existingRev, err := searchRevisionHistory(controllerRevisions, newRevisionHash); err != nil {
+			return err
+		} else if existingRev != nil {
+			// Update the found matching revision to be the latest
+			err := r.updateRevisionToLatest(ctx, cr, existingRev, latestRevisionNumber)
+			if err != nil {
+				fmt.Println("Failed to update existing found revision to be the latest")
+			}
+		} else {
+			if err := r.createControllerRevision(ctx, cr, controllerRevisions, newRevisionData, latestRevisionNumber); err != nil {
+				fmt.Println("Failed to create new controller revision")
+				return err
+			}
 		}
 	}
 
