@@ -85,6 +85,57 @@ var _ = BeforeSuite(func() {
 
 })
 
+func TestGetAllControllerRevisions(t *testing.T) {
+	scheme := runtime.NewScheme()
+	_ = customreplicasetv1.AddToScheme(scheme)
+	_ = v1.AddToScheme(scheme)
+
+	// Create test CustomReplicaSet
+	cr := &customreplicasetv1.CustomReplicaSet{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "test-crs",
+			Namespace: "default",
+		},
+	}
+
+	// Create two ControllerRevisions with different Revisions
+	revision2 := &v1.ControllerRevision{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "revision2",
+			Namespace: "default",
+			Labels:    map[string]string{"owner": "test-crs"},
+		},
+		Revision: 2,
+	}
+	revision1 := &v1.ControllerRevision{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "revision1",
+			Namespace: "default",
+			Labels:    map[string]string{"owner": "test-crs"},
+		},
+		Revision: 1,
+	}
+
+	// Mock Client
+	client := fake.NewClientBuilder().WithScheme(scheme).WithRuntimeObjects(cr, revision1, revision2).Build()
+
+	// Create test reconciler
+	reconciler := &CustomReplicaSetReconciler{
+		Client: client,
+		Scheme: scheme,
+	}
+
+	ctx := context.Background()
+
+	t.Run("should return all controller revisions sorted by revision", func(t *testing.T) {
+		revisions, err := reconciler.getAllControllerRevisions(ctx, cr, true)
+		assert.NoError(t, err)
+		assert.Len(t, revisions.Items, 2)
+		assert.Equal(t, "revision1", revisions.Items[0].Name)
+		assert.Equal(t, "revision2", revisions.Items[1].Name)
+	})
+}
+
 func TestSearchRevisionHistory(t *testing.T) {
 	revision1Data, _ := json.Marshal(map[string]string{"key": "revision1"})
 	revision2Data, _ := json.Marshal(map[string]string{"key": "revision2"})
