@@ -259,6 +259,56 @@ func TestFindCustomReplicaSet(t *testing.T) {
 	})
 }
 
+func TestFindChildPods(t *testing.T) {
+	logger := zap.New(zap.UseDevMode(true))
+	scheme := runtime.NewScheme()
+	_ = corev1.AddToScheme(scheme)
+
+	// Create test request
+	req := reconcile.Request{
+		NamespacedName: types.NamespacedName{
+			Name:      "test-crs",
+			Namespace: "default",
+		},
+	}
+	t.Run("should find the child pods", func(t *testing.T) {
+		// Create test Pod Objects
+		pod1 := &corev1.Pod{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "test-pod1",
+				Namespace: "default",
+			},
+			Spec: corev1.PodSpec{},
+		}
+
+		pod2 := &corev1.Pod{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "test-pod2",
+				Namespace: "default",
+			},
+			Spec: corev1.PodSpec{},
+		}
+
+		// Mock Client
+		client := fake.NewClientBuilder().WithScheme(scheme).WithRuntimeObjects(pod1, pod2).Build()
+
+		// Create test reconciler
+		reconciler := &CustomReplicaSetReconciler{
+			Client: client,
+			Scheme: scheme,
+		}
+
+		// Call function to test
+		pods, err := reconciler.findChildPods(context.Background(), req, logger)
+
+		assert.NoError(t, err)
+		assert.Equal(t, 2, len(pods.Items))
+		assert.Equal(t, "test-pod1", pods.Items[0].Name)
+		assert.Equal(t, "test-pod2", pods.Items[1].Name)
+	})
+
+}
+
 var _ = AfterSuite(func() {
 	By("tearing down the test environment")
 	err := testEnv.Stop()
