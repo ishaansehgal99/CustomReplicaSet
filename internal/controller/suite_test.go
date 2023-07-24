@@ -28,7 +28,8 @@ import (
 	. "github.com/onsi/gomega"
 	"github.com/stretchr/testify/assert"
 
-	v1 "k8s.io/api/core/v1"
+	v1 "k8s.io/api/apps/v1"
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
@@ -84,6 +85,42 @@ var _ = BeforeSuite(func() {
 
 })
 
+func TestSearchRevisionHistory(t *testing.T) {
+	revision1Data, _ := json.Marshal(map[string]string{"key": "revision1"})
+	revision2Data, _ := json.Marshal(map[string]string{"key": "revision2"})
+
+	controllerRevList := &v1.ControllerRevisionList{
+		Items: []v1.ControllerRevision{
+			{
+				Data: runtime.RawExtension{
+					Raw: revision1Data,
+				},
+			},
+			{
+				Data: runtime.RawExtension{
+					Raw: revision2Data,
+				},
+			},
+		},
+	}
+
+	// Mock a targetHash to find in the ControllerRevisionList
+	targetHash := "6ba0d659ea642d3617a846270bd11cc3fcf56b6cb1db4b7f322fae18f60717eb" // This is the SHA-256 of "revision1"
+
+	t.Run("should find the controller revision with the given hash", func(t *testing.T) {
+		revision, err := searchRevisionHistory(controllerRevList, targetHash)
+		assert.NoError(t, err)
+		assert.NotNil(t, revision)
+		assert.Equal(t, string(revision1Data), string(revision.Data.Raw))
+	})
+
+	t.Run("should return nil when the controller revision with the given hash does not exist", func(t *testing.T) {
+		revision, err := searchRevisionHistory(controllerRevList, "nonexistenthash")
+		assert.NoError(t, err)
+		assert.Nil(t, revision)
+	})
+}
+
 type BadJSON struct {
 	metav1.TypeMeta // Include this to add the GetObjectKind() method
 }
@@ -136,10 +173,10 @@ func TestConvertCRSpecToJson(t *testing.T) {
 			Replicas:             10,
 			Partition:            5,
 			RevisionHistoryLimit: 20,
-			Template: v1.PodTemplateSpec{
-				Spec: v1.PodSpec{
+			Template: corev1.PodTemplateSpec{
+				Spec: corev1.PodSpec{
 					RestartPolicy: "Never",
-					Containers: []v1.Container{
+					Containers: []corev1.Container{
 						{
 							Name:    "busybox",
 							Image:   "busybox:latest",
