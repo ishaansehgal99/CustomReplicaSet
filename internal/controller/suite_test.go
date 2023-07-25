@@ -91,6 +91,7 @@ var _ = BeforeSuite(func() {
 func TestUpdateRevisionLabel(t *testing.T) {
 	scheme := runtime.NewScheme()
 	_ = customreplicasetv1.AddToScheme(scheme)
+	_ = v1.AddToScheme(scheme)
 
 	// Create a test CustomReplicaSet and ControllerRevision
 	cr := &customreplicasetv1.CustomReplicaSet{
