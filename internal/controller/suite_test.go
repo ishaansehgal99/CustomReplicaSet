@@ -20,7 +20,9 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/go-logr/logr"
@@ -85,6 +87,114 @@ var _ = BeforeSuite(func() {
 
 })
 
+func TestCreateControllerRevision(t *testing.T) {
+	scheme := runtime.NewScheme()
+	_ = customreplicasetv1.AddToScheme(scheme)
+	_ = v1.AddToScheme(scheme)
+
+	cr := &customreplicasetv1.CustomReplicaSet{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "test-crs",
+			Namespace: "default",
+		},
+		Spec: customreplicasetv1.CustomReplicaSetSpec{
+			RevisionHistoryLimit: 1,
+		},
+	}
+	t.Run("should create a controller revision", func(t *testing.T) {
+		cl := fake.NewClientBuilder().WithScheme(scheme).WithRuntimeObjects(cr).Build()
+
+		reconciler := &CustomReplicaSetReconciler{
+			Client: cl,
+			Scheme: scheme,
+		}
+
+		ctx := context.Background()
+
+		controllerRevList := &v1.ControllerRevisionList{}
+
+		revisionData := runtime.RawExtension{
+			Raw: []byte(`{"foo":"bar"}`),
+		}
+
+		latestRevisionNumber := 1
+		err := reconciler.createControllerRevision(ctx, cr, controllerRevList, revisionData, int64(latestRevisionNumber))
+
+		assert.NoError(t, err)
+		assert.True(t, strings.HasPrefix(cr.Labels["latestRevisionName"], fmt.Sprintf("%s-controller-revision-", cr.Name)))
+		assert.Equal(t, cr.Labels["latestRevisionNumber"], "2")
+
+		revisionList := v1.ControllerRevisionList{}
+		err = reconciler.Client.List(ctx, &revisionList)
+		assert.NoError(t, err)
+		assert.Equal(t, len(revisionList.Items), 1)
+
+		err = reconciler.Client.Get(ctx, client.ObjectKey{
+			Namespace: cr.Namespace,
+			Name:      cr.Name,
+		}, cr)
+
+		assert.NoError(t, err)
+
+		newRevision := revisionList.Items[0]
+		assert.Equal(t, newRevision.Data, revisionData)
+		assert.Equal(t, newRevision.ObjectMeta.Labels["owner"], cr.Name)
+		assert.Equal(t, newRevision.Revision, int64(2))
+	})
+
+	t.Run("should maintain revisionHistoryLimit number of controller revisions", func(t *testing.T) {
+		cl := fake.NewClientBuilder().WithScheme(scheme).WithRuntimeObjects(cr).Build()
+
+		reconciler := &CustomReplicaSetReconciler{
+			Client: cl,
+			Scheme: scheme,
+		}
+
+		ctx := context.Background()
+
+		controllerRevList := &v1.ControllerRevisionList{}
+
+		revisionData := runtime.RawExtension{
+			Raw: []byte(`{"foo":"bar"}`),
+		}
+
+		revisionNum := 5
+		err := reconciler.createControllerRevision(ctx, cr, controllerRevList, revisionData, int64(revisionNum))
+		assert.NoError(t, err)
+		assert.True(t, strings.HasPrefix(cr.Labels["latestRevisionName"], fmt.Sprintf("%s-controller-revision-", cr.Name)))
+		assert.Equal(t, cr.Labels["latestRevisionNumber"], "6")
+
+		revisionList := &v1.ControllerRevisionList{}
+		err = reconciler.Client.List(ctx, revisionList)
+		assert.NoError(t, err)
+		assert.Equal(t, len(revisionList.Items), 1)
+
+		revisionNum = 6
+		err = reconciler.createControllerRevision(ctx, cr, revisionList, revisionData, int64(revisionNum))
+		assert.NoError(t, err)
+		assert.True(t, strings.HasPrefix(cr.Labels["latestRevisionName"], fmt.Sprintf("%s-controller-revision-", cr.Name)))
+		assert.Equal(t, cr.Labels["latestRevisionNumber"], "7")
+
+		revisionList = &v1.ControllerRevisionList{}
+		err = reconciler.Client.List(ctx, revisionList)
+		assert.NoError(t, err)
+		// RevisionHistoryLimit should maintain only one controller revision history item
+		assert.Equal(t, len(revisionList.Items), 1)
+
+		err = reconciler.Client.Get(ctx, client.ObjectKey{
+			Namespace: cr.Namespace,
+			Name:      cr.Name,
+		}, cr)
+
+		assert.NoError(t, err)
+
+		revision := revisionList.Items[0]
+		assert.Equal(t, revision.Data, revisionData)
+		assert.Equal(t, revision.ObjectMeta.Labels["owner"], cr.Name)
+		assert.Equal(t, revision.Revision, int64(7))
+	})
+}
+
 func TestGetAllControllerRevisions(t *testing.T) {
 	scheme := runtime.NewScheme()
 	_ = customreplicasetv1.AddToScheme(scheme)
@@ -115,9 +225,17 @@ func TestGetAllControllerRevisions(t *testing.T) {
 		},
 		Revision: 1,
 	}
+	revision3 := &v1.ControllerRevision{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "revision3",
+			Namespace: "default",
+			Labels:    map[string]string{"owner": "test-crs"},
+		},
+		Revision: 3,
+	}
 
 	// Mock Client
-	client := fake.NewClientBuilder().WithScheme(scheme).WithRuntimeObjects(cr, revision1, revision2).Build()
+	client := fake.NewClientBuilder().WithScheme(scheme).WithRuntimeObjects(cr, revision2, revision1, revision3).Build()
 
 	// Create test reconciler
 	reconciler := &CustomReplicaSetReconciler{
@@ -130,9 +248,10 @@ func TestGetAllControllerRevisions(t *testing.T) {
 	t.Run("should return all controller revisions sorted by revision", func(t *testing.T) {
 		revisions, err := reconciler.getAllControllerRevisions(ctx, cr, true)
 		assert.NoError(t, err)
-		assert.Len(t, revisions.Items, 2)
+		assert.Len(t, revisions.Items, 3)
 		assert.Equal(t, "revision1", revisions.Items[0].Name)
 		assert.Equal(t, "revision2", revisions.Items[1].Name)
+		assert.Equal(t, "revision3", revisions.Items[2].Name)
 	})
 }
 
