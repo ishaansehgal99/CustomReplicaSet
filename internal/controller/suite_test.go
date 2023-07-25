@@ -88,6 +88,93 @@ var _ = BeforeSuite(func() {
 
 })
 
+func TestManageControllerHistory(t *testing.T) {
+	scheme := runtime.NewScheme()
+	_ = customreplicasetv1.AddToScheme(scheme)
+	_ = v1.AddToScheme(scheme)
+
+	ctx := context.Background()
+
+	cr := &customreplicasetv1.CustomReplicaSet{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "test-crs",
+			Namespace: "default",
+		},
+		Spec: customreplicasetv1.CustomReplicaSetSpec{
+			RevisionHistoryLimit: 3,
+		},
+	}
+
+	t.Run("should create a new revision history entry", func(t *testing.T) {
+		cl := fake.NewClientBuilder().WithScheme(scheme).WithRuntimeObjects(cr).Build()
+
+		reconciler := &CustomReplicaSetReconciler{
+			Client: cl,
+			Scheme: scheme,
+		}
+
+		err := reconciler.manageControllerRevisionHistory(ctx, cr)
+		assert.NoError(t, err)
+		assert.True(t, strings.HasPrefix(cr.Labels["latestRevisionName"], fmt.Sprintf("%s-controller-revision-", cr.Name)))
+		assert.Equal(t, cr.Labels["latestRevisionNumber"], "1")
+
+		revisionList := v1.ControllerRevisionList{}
+		err = reconciler.Client.List(ctx, &revisionList)
+		assert.NoError(t, err)
+		assert.Equal(t, len(revisionList.Items), 1)
+
+		err = reconciler.Client.Get(ctx, client.ObjectKey{
+			Namespace: cr.Namespace,
+			Name:      cr.Name,
+		}, cr)
+
+		assert.NoError(t, err)
+
+		jsonSpec, err := convertCRSpecToJson(cr.Spec)
+		assert.NoError(t, err)
+
+		revisionData := runtime.RawExtension{Raw: jsonSpec}
+		newRevision := revisionList.Items[0]
+		assert.Equal(t, newRevision.Data, revisionData)
+		assert.Equal(t, newRevision.ObjectMeta.Labels["owner"], cr.Name)
+		assert.Equal(t, newRevision.Revision, int64(1))
+	})
+
+	t.Run("should use cached revision history", func(t *testing.T) {
+		jsonSpec, err := convertCRSpecToJson(cr.Spec)
+		assert.NoError(t, err)
+
+		currRevisionData := runtime.RawExtension{Raw: jsonSpec}
+		revision := &v1.ControllerRevision{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      fmt.Sprintf("%s-controller-revision-1", cr.Name),
+				Namespace: cr.Namespace,
+			},
+			Data:     currRevisionData,
+			Revision: 1,
+		}
+		cr.Labels["latestRevisionName"] = revision.Name
+
+		cl := fake.NewClientBuilder().WithScheme(scheme).WithRuntimeObjects(cr, revision).Build()
+
+		reconciler := &CustomReplicaSetReconciler{
+			Client: cl,
+			Scheme: scheme,
+		}
+
+		err = reconciler.manageControllerRevisionHistory(ctx, cr)
+		assert.NoError(t, err)
+
+		revisionList := v1.ControllerRevisionList{}
+		err = reconciler.Client.List(ctx, &revisionList)
+		assert.NoError(t, err)
+		assert.Equal(t, len(revisionList.Items), 1)
+
+		newRevision := revisionList.Items[0]
+		assert.Equal(t, newRevision.Data, revision.Data)
+		assert.Equal(t, newRevision.Revision, int64(1))
+	})
+}
 func TestUpdateRevisionToLatest(t *testing.T) {
 	scheme := runtime.NewScheme()
 	_ = customreplicasetv1.AddToScheme(scheme)
