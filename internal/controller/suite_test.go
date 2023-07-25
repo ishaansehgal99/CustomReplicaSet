@@ -119,18 +119,27 @@ func TestUpdateRevisionLabel(t *testing.T) {
 		Scheme: scheme,
 	}
 
-	// Call the function to test
-	err := reconciler.updateCRRevisionLabel(context.Background(), cr, rev)
-	assert.NoError(t, err)
+	t.Run("should update the CR revision label", func(t *testing.T) {
+		// Call the function to test
+		err := reconciler.updateCRRevisionLabel(context.Background(), cr, rev)
+		assert.NoError(t, err)
 
-	// Check the updated CustomReplicaSet
-	updatedCR := &customreplicasetv1.CustomReplicaSet{}
-	err = cl.Get(context.Background(), client.ObjectKey{Name: cr.Name, Namespace: cr.Namespace}, updatedCR)
-	assert.NoError(t, err)
+		// Check the updated CustomReplicaSet
+		updatedCR := &customreplicasetv1.CustomReplicaSet{}
+		err = cl.Get(context.Background(), client.ObjectKey{Name: cr.Name, Namespace: cr.Namespace}, updatedCR)
+		assert.NoError(t, err)
 
-	// Assert that the labels were updated correctly
-	assert.Equal(t, rev.Name, updatedCR.Labels["latestRevisionName"])
-	assert.Equal(t, strconv.FormatInt(rev.Revision, 10), updatedCR.Labels["latestRevisionNumber"])
+		// Assert that the labels were updated correctly
+		assert.Equal(t, rev.Name, updatedCR.Labels["latestRevisionName"])
+		assert.Equal(t, strconv.FormatInt(rev.Revision, 10), updatedCR.Labels["latestRevisionNumber"])
+	})
+
+	t.Run("should not update the CR revision label", func(t *testing.T) {
+		err := reconciler.updateCRRevisionLabel(context.Background(), cr, nil)
+		assert.Error(t, err)
+		assert.Equal(t, "invalid controller revision to update CR label with", err.Error())
+	})
+
 }
 
 func TestCreateControllerRevision(t *testing.T) {
