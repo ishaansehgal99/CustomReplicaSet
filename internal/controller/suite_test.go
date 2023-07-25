@@ -22,6 +22,7 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -86,6 +87,50 @@ var _ = BeforeSuite(func() {
 	Expect(k8sClient).NotTo(BeNil())
 
 })
+
+func TestUpdateRevisionLabel(t *testing.T) {
+	scheme := runtime.NewScheme()
+	_ = customreplicasetv1.AddToScheme(scheme)
+
+	// Create a test CustomReplicaSet and ControllerRevision
+	cr := &customreplicasetv1.CustomReplicaSet{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "test-crs",
+			Namespace: "default",
+			Labels:    map[string]string{},
+		},
+		Spec: customreplicasetv1.CustomReplicaSetSpec{},
+	}
+
+	rev := &v1.ControllerRevision{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "test-revision",
+			Namespace: "default",
+		},
+		Revision: 1,
+	}
+
+	cl := fake.NewClientBuilder().WithScheme(scheme).WithRuntimeObjects(cr, rev).Build()
+
+	// Create the test reconciler
+	reconciler := &CustomReplicaSetReconciler{
+		Client: cl,
+		Scheme: scheme,
+	}
+
+	// Call the function to test
+	err := reconciler.updateCRRevisionLabel(context.Background(), cr, rev)
+	assert.NoError(t, err)
+
+	// Check the updated CustomReplicaSet
+	updatedCR := &customreplicasetv1.CustomReplicaSet{}
+	err = cl.Get(context.Background(), client.ObjectKey{Name: cr.Name, Namespace: cr.Namespace}, updatedCR)
+	assert.NoError(t, err)
+
+	// Assert that the labels were updated correctly
+	assert.Equal(t, rev.Name, updatedCR.Labels["latestRevisionName"])
+	assert.Equal(t, strconv.FormatInt(rev.Revision, 10), updatedCR.Labels["latestRevisionNumber"])
+}
 
 func TestCreateControllerRevision(t *testing.T) {
 	scheme := runtime.NewScheme()
