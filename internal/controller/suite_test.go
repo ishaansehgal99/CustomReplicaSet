@@ -88,6 +88,71 @@ var _ = BeforeSuite(func() {
 
 })
 
+func TestGetLatestRevision(t *testing.T) {
+	scheme := runtime.NewScheme()
+	_ = customreplicasetv1.AddToScheme(scheme)
+	_ = v1.AddToScheme(scheme)
+
+	cr := &customreplicasetv1.CustomReplicaSet{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "test-crs",
+			Namespace: "default",
+		},
+	}
+
+	t.Run("should get latest revision", func(t *testing.T) {
+		// Create client and reconciler with only one revision
+		client := fake.NewClientBuilder().WithScheme(scheme).WithRuntimeObjects(cr).Build()
+
+		reconciler := &CustomReplicaSetReconciler{
+			Client: client,
+			Scheme: scheme,
+		}
+
+		controllerRevList := &v1.ControllerRevisionList{}
+
+		rev, revNumber, err := reconciler.getLatestRevision(context.Background(), cr, controllerRevList)
+
+		assert.NoError(t, err)
+		assert.Equal(t, int64(0), revNumber)
+		assert.Equal(t, (*v1.ControllerRevision)(nil), rev)
+
+		revision1 := &v1.ControllerRevision{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "revision1",
+				Namespace: "default",
+			},
+			Revision: 1,
+		}
+
+		controllerRevList.Items = append(controllerRevList.Items, *revision1)
+		rev, revNumber, err = reconciler.getLatestRevision(context.Background(), cr, controllerRevList)
+
+		// Assert that with one revision, the latest is revision1
+		assert.NoError(t, err)
+		assert.Equal(t, int64(1), revNumber)
+		assert.Equal(t, "revision1", rev.Name)
+
+		// Add another revision
+		revision2 := &v1.ControllerRevision{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "revision2",
+				Namespace: "default",
+			},
+			Revision: 2,
+		}
+
+		controllerRevList.Items = append(controllerRevList.Items, *revision2)
+
+		rev, revNumber, err = reconciler.getLatestRevision(context.Background(), cr, controllerRevList)
+
+		// Assert that with two revisions, the latest is revision2
+		assert.NoError(t, err)
+		assert.Equal(t, int64(2), revNumber)
+		assert.Equal(t, "revision2", rev.Name)
+	})
+}
+
 func TestUpdateRevisionLabel(t *testing.T) {
 	scheme := runtime.NewScheme()
 	_ = customreplicasetv1.AddToScheme(scheme)
