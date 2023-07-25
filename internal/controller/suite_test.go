@@ -88,6 +88,59 @@ var _ = BeforeSuite(func() {
 
 })
 
+func TestUpdateRevisionToLatest(t *testing.T) {
+	scheme := runtime.NewScheme()
+	_ = customreplicasetv1.AddToScheme(scheme)
+	_ = v1.AddToScheme(scheme)
+
+	cr := &customreplicasetv1.CustomReplicaSet{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "test-crs",
+			Namespace: "default",
+		},
+	}
+
+	existingRev := &v1.ControllerRevision{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "revision",
+			Namespace: "default",
+		},
+		Revision: 1,
+	}
+
+	t.Run("update revision to latest", func(t *testing.T) {
+		cl := fake.NewClientBuilder().WithScheme(scheme).WithRuntimeObjects(cr, existingRev).Build()
+		reconciler := &CustomReplicaSetReconciler{
+			Client: cl,
+			Scheme: scheme,
+		}
+
+		latestRevisionNumber := int64(2)
+		err := reconciler.updateRevisionToLatest(context.Background(), cr, existingRev, latestRevisionNumber)
+
+		assert.NoError(t, err)
+
+		updatedRev := &v1.ControllerRevision{}
+		err = cl.Get(context.Background(), client.ObjectKey{Namespace: existingRev.Namespace, Name: existingRev.Name}, updatedRev)
+
+		assert.NoError(t, err)
+		assert.Equal(t, latestRevisionNumber+1, updatedRev.Revision)
+
+		// Fetch updated CustomReplicaSet
+		updatedCR := &customreplicasetv1.CustomReplicaSet{}
+		err = cl.Get(context.Background(), client.ObjectKey{Namespace: cr.Namespace, Name: cr.Name}, updatedCR)
+
+		assert.NoError(t, err)
+
+		// Check that the labels were updated correctly
+		expectedLabels := map[string]string{
+			"latestRevisionName":   existingRev.Name,
+			"latestRevisionNumber": strconv.FormatInt(existingRev.Revision, 10),
+		}
+		assert.Equal(t, expectedLabels, updatedCR.Labels)
+	})
+}
+
 func TestGetLatestRevision(t *testing.T) {
 	scheme := runtime.NewScheme()
 	_ = customreplicasetv1.AddToScheme(scheme)
