@@ -77,14 +77,14 @@ func (r *CustomReplicaSetReconciler) Reconcile(ctx context.Context, req ctrl.Req
 		return ctrl.Result{Requeue: false}, err
 	}
 
-	availableStdPods, availableUpgPods := countAvailablePods(childPods.Items)
-	totalAvailablePods := availableStdPods + availableUpgPods
-
 	// Apply any necessary updates to controller revision history
 	_, err = r.manageControllerRevisionHistory(ctx, &crs)
 	if err != nil {
 		return ctrl.Result{Requeue: true}, err
 	}
+
+	availableStdPods, availableUpgPods := countAvailablePods(childPods.Items)
+	totalAvailablePods := availableStdPods + availableUpgPods
 
 	if err := r.managePods(ctx, totalAvailablePods, availableStdPods, availableUpgPods, &crs, childPods, log); err != nil {
 		return ctrl.Result{Requeue: true}, err
