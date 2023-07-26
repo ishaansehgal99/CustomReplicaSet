@@ -1,0 +1,655 @@
+
+<!DOCTYPE html>
+<html>
+	<head>
+		<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+		<title>controller: Go Coverage Report</title>
+		<style>
+			body {
+				background: black;
+				color: rgb(80, 80, 80);
+			}
+			body, pre, #legend span {
+				font-family: Menlo, monospace;
+				font-weight: bold;
+			}
+			#topbar {
+				background: black;
+				position: fixed;
+				top: 0; left: 0; right: 0;
+				height: 42px;
+				border-bottom: 1px solid rgb(80, 80, 80);
+			}
+			#content {
+				margin-top: 50px;
+			}
+			#nav, #legend {
+				float: left;
+				margin-left: 10px;
+			}
+			#legend {
+				margin-top: 12px;
+			}
+			#nav {
+				margin-top: 10px;
+			}
+			#legend span {
+				margin: 0 5px;
+			}
+			.cov0 { color: rgb(192, 0, 0) }
+.cov1 { color: rgb(128, 128, 128) }
+.cov2 { color: rgb(116, 140, 131) }
+.cov3 { color: rgb(104, 152, 134) }
+.cov4 { color: rgb(92, 164, 137) }
+.cov5 { color: rgb(80, 176, 140) }
+.cov6 { color: rgb(68, 188, 143) }
+.cov7 { color: rgb(56, 200, 146) }
+.cov8 { color: rgb(44, 212, 149) }
+.cov9 { color: rgb(32, 224, 152) }
+.cov10 { color: rgb(20, 236, 155) }
+
+		</style>
+	</head>
+	<body>
+		<div id="topbar">
+			<div id="nav">
+				<select id="files">
+				
+				<option value="file0">github.com/ishaansehgal99/CustomReplicaSet/internal/controller/customreplicaset_controller.go (35.8%)</option>
+				
+				</select>
+			</div>
+			<div id="legend">
+				<span>not tracked</span>
+			
+				<span class="cov0">not covered</span>
+				<span class="cov8">covered</span>
+			
+			</div>
+		</div>
+		<div id="content">
+		
+		<pre class="file" id="file0" style="display: none">/*
+Copyright 2023.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
+package controller
+
+import (
+        "context"
+        "crypto/sha256"
+        "encoding/json"
+        "fmt"
+        "sort"
+        "strconv"
+        "strings"
+        "time"
+
+        v1 "k8s.io/api/apps/v1"
+        corev1 "k8s.io/api/core/v1"
+        metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+
+        "k8s.io/apimachinery/pkg/api/errors"
+        "k8s.io/apimachinery/pkg/runtime"
+        ctrl "sigs.k8s.io/controller-runtime"
+        "sigs.k8s.io/controller-runtime/pkg/client"
+        "sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
+        "sigs.k8s.io/controller-runtime/pkg/log"
+
+        "github.com/go-logr/logr"
+        customreplicasetv1 "github.com/ishaansehgal99/CustomReplicaSet/api/v1"
+)
+
+// CustomReplicaSetReconciler reconciles a CustomReplicaSet object
+type CustomReplicaSetReconciler struct {
+        client.Client
+        Scheme *runtime.Scheme
+}
+
+//+kubebuilder:rbac:groups=customreplicaset.ishaan.microsoft,resources=customreplicasets,verbs=get;list;watch;create;update;patch;delete
+//+kubebuilder:rbac:groups=customreplicaset.ishaan.microsoft,resources=customreplicasets/status,verbs=get;update;patch
+//+kubebuilder:rbac:groups=customreplicaset.ishaan.microsoft,resources=customreplicasets/finalizers,verbs=update
+
+// Reconcile is part of the main kubernetes reconciliation loop which aims to
+// move the current state of the cluster closer to the desired state.
+// TODO(user): Modify the Reconcile function to compare the state specified by
+// the CustomReplicaSet object against the actual cluster state, and then
+// perform operations to make the cluster state reflect the state specified by
+// the user.
+//
+// For more details, check Reconcile and its Result here:
+// - https://pkg.go.dev/sigs.k8s.io/controller-runtime@v0.15.0/pkg/reconcile
+func (r *CustomReplicaSetReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) <span class="cov0" title="0">{
+        log := log.FromContext(ctx)
+
+        log.Info("Triggered Reconcile")
+
+        // Find the custom replica set instance
+        crs, err := r.findCustomReplicaSet(ctx, req, log)
+        if err != nil </span><span class="cov0" title="0">{
+                return ctrl.Result{Requeue: false}, err
+        }</span>
+
+        // If we do find it, list all pods owned by it
+        <span class="cov0" title="0">childPods, err := r.findChildPods(ctx, req, log)
+        if err != nil </span><span class="cov0" title="0">{
+                return ctrl.Result{Requeue: false}, err
+        }</span>
+
+        <span class="cov0" title="0">availableStdPods, availableUpgPods := countAvailablePods(childPods.Items)
+        totalAvailablePods := availableStdPods + availableUpgPods
+
+        // Apply any necessary updates to controller revision history
+        if err := r.manageControllerRevisionHistory(ctx, &amp;crs); err != nil </span><span class="cov0" title="0">{
+                return ctrl.Result{Requeue: true}, err
+        }</span>
+
+        <span class="cov0" title="0">if err := r.managePods(ctx, totalAvailablePods, availableStdPods, availableUpgPods, &amp;crs, childPods, log); err != nil </span><span class="cov0" title="0">{
+                return ctrl.Result{Requeue: true}, err
+        }</span>
+
+        <span class="cov0" title="0">return ctrl.Result{Requeue: false}, err</span>
+}
+
+// Create a new ControllerRevision and add it to history
+func (r *CustomReplicaSetReconciler) createControllerRevision(ctx context.Context, cr *customreplicasetv1.CustomReplicaSet, controllerRevisions *v1.ControllerRevisionList, revisionData runtime.RawExtension, latestRevisionNumber int64) error <span class="cov8" title="1">{
+        t := time.Now()
+        newRevision := v1.ControllerRevision{
+                ObjectMeta: metav1.ObjectMeta{
+                        Name:      fmt.Sprintf("%s-controller-revision-%d", cr.Name, t.UnixNano()),
+                        Namespace: cr.Namespace,
+                        Labels: map[string]string{
+                                "owner": cr.Name,
+                        },
+                },
+                Data:     revisionData,
+                Revision: latestRevisionNumber + 1,
+        }
+
+        // Delete oldest revision if over revision limit
+        if len(controllerRevisions.Items) &gt;= int(cr.Spec.RevisionHistoryLimit) </span><span class="cov8" title="1">{
+                oldestRevision, err := r.getControllerRevisionAtIndex(ctx, cr, controllerRevisions, 0)
+                if err != nil </span><span class="cov0" title="0">{
+                        return err
+                }</span>
+
+                <span class="cov8" title="1">if err := r.Delete(ctx, oldestRevision); err != nil </span><span class="cov0" title="0">{
+                        return err
+                }</span>
+        }
+
+        // Create Revision
+        <span class="cov8" title="1">if err := r.Create(ctx, &amp;newRevision); err != nil </span><span class="cov0" title="0">{
+                return err
+        }</span>
+        // Set CR as its owner
+        <span class="cov8" title="1">if err := controllerutil.SetControllerReference(cr, &amp;newRevision, r.Scheme); err != nil </span><span class="cov0" title="0">{
+                return err
+        }</span>
+
+        // Add latest revision number to CR Labels
+        <span class="cov8" title="1">if err := r.updateCRRevisionLabel(ctx, cr, &amp;newRevision); err != nil </span><span class="cov0" title="0">{
+                return err
+        }</span>
+
+        <span class="cov8" title="1">return nil</span>
+}
+
+// Update 'revisionNumber' label of the CustomReplicaSet
+func (r *CustomReplicaSetReconciler) updateCRRevisionLabel(ctx context.Context, cr *customreplicasetv1.CustomReplicaSet, latestRevision *v1.ControllerRevision) error <span class="cov8" title="1">{
+        if latestRevision == nil </span><span class="cov8" title="1">{
+                return fmt.Errorf("invalid controller revision to update CR label with")
+        }</span>
+        <span class="cov8" title="1">if cr.Labels == nil </span><span class="cov8" title="1">{
+                cr.Labels = map[string]string{}
+        }</span>
+
+        <span class="cov8" title="1">cr.Labels["latestRevisionName"] = latestRevision.Name
+        cr.Labels["latestRevisionNumber"] = strconv.FormatInt(latestRevision.Revision, 10)
+        if err := r.Update(ctx, cr); err != nil </span><span class="cov0" title="0">{
+                return err
+        }</span>
+
+        <span class="cov8" title="1">return nil</span>
+}
+
+func hashControllerRevisionData(revisionData runtime.RawExtension) (string, error) <span class="cov8" title="1">{
+        jsonData, err := json.Marshal(revisionData)
+        if err != nil </span><span class="cov8" title="1">{
+                return "", err
+        }</span>
+
+        // Compute SHA256 hash of PodTemplate
+        <span class="cov8" title="1">hash := sha256.Sum256(jsonData)
+
+        // Convert the hash to hexadecimal string
+        hashString := fmt.Sprintf("%x", hash)
+
+        return hashString, nil</span>
+}
+
+func (r *CustomReplicaSetReconciler) getAllControllerRevisions(ctx context.Context, cr *customreplicasetv1.CustomReplicaSet, sorted bool) (*v1.ControllerRevisionList, error) <span class="cov8" title="1">{
+        controllerRevisions := &amp;v1.ControllerRevisionList{}
+        if err := r.List(ctx, controllerRevisions, client.InNamespace(cr.Namespace), client.MatchingLabels{"owner": cr.Name}); err != nil </span><span class="cov0" title="0">{
+                return nil, err
+        }</span>
+
+        // Sort the ControllerRevisions by Revision
+        <span class="cov8" title="1">if sorted </span><span class="cov8" title="1">{
+                sort.Slice(controllerRevisions.Items, func(i, j int) bool </span><span class="cov8" title="1">{
+                        return controllerRevisions.Items[i].Revision &lt; controllerRevisions.Items[j].Revision
+                }</span>)
+        }
+
+        <span class="cov8" title="1">return controllerRevisions, nil</span>
+}
+
+func (r *CustomReplicaSetReconciler) manageControllerRevisionHistory(ctx context.Context, cr *customreplicasetv1.CustomReplicaSet) error <span class="cov8" title="1">{
+        jsonSpec, err := convertCRSpecToJson(cr.Spec)
+        if err != nil </span><span class="cov0" title="0">{
+                return err
+        }</span>
+
+        <span class="cov8" title="1">newRevisionData := runtime.RawExtension{Raw: jsonSpec}
+        newRevisionHash, err := hashControllerRevisionData(newRevisionData)
+        if err != nil </span><span class="cov0" title="0">{
+                return err
+        }</span>
+
+        <span class="cov8" title="1">cachedRevision := &amp;v1.ControllerRevision{}
+        cachedRevisionHash := ""
+        if cachedRevisionName, ok := cr.Labels["latestRevisionName"]; ok </span><span class="cov8" title="1">{
+                if err := r.Get(ctx, client.ObjectKey{Namespace: cr.Namespace, Name: cachedRevisionName}, cachedRevision); err != nil </span><span class="cov0" title="0">{
+                        fmt.Println("Cached label for revision name is invalid, need to perform search for latest revision")
+                }</span>
+
+                <span class="cov8" title="1">cachedRevisionHash, err = hashControllerRevisionData(cachedRevision.Data)
+                if err != nil </span><span class="cov0" title="0">{
+                        fmt.Println("Failed to generate hash for CR labeled controller revision data")
+                        return err
+                }</span>
+        }
+
+        // Search if the revision we are trying to create has been cached in the cr, or already exists
+        // in the revision history, if so update that revision history entry to be the latest,
+        // if not create and append a new revision entry
+        <span class="cov8" title="1">if cachedRevisionHash != newRevisionHash </span><span class="cov8" title="1">{
+                controllerRevisions, err := r.getAllControllerRevisions(ctx, cr, true)
+                if err != nil </span><span class="cov0" title="0">{
+                        return err
+                }</span>
+
+                <span class="cov8" title="1">_, latestRevisionNumber, err := r.getLatestRevision(ctx, cr, controllerRevisions)
+                if err != nil </span><span class="cov0" title="0">{
+                        return err
+                }</span>
+
+                <span class="cov8" title="1">if existingRev, err := searchRevisionHistory(controllerRevisions, newRevisionHash); err != nil </span><span class="cov0" title="0">{
+                        return err
+                }</span> else<span class="cov8" title="1"> if existingRev != nil </span><span class="cov0" title="0">{
+                        // Update the found matching revision to be the latest
+                        err := r.updateRevisionToLatest(ctx, cr, existingRev, latestRevisionNumber)
+                        if err != nil </span><span class="cov0" title="0">{
+                                fmt.Println("Failed to update existing found revision to be the latest")
+                        }</span>
+                } else<span class="cov8" title="1"> {
+                        if err := r.createControllerRevision(ctx, cr, controllerRevisions, newRevisionData, latestRevisionNumber); err != nil </span><span class="cov0" title="0">{
+                                fmt.Println("Failed to create new controller revision")
+                                return err
+                        }</span>
+                }
+        }
+
+        <span class="cov8" title="1">return nil</span>
+}
+
+func (r *CustomReplicaSetReconciler) updateRevisionToLatest(ctx context.Context, cr *customreplicasetv1.CustomReplicaSet, existingRev *v1.ControllerRevision, latestRevisionNumber int64) error <span class="cov8" title="1">{
+        if existingRev.Revision != latestRevisionNumber </span><span class="cov8" title="1">{
+                existingRev.Revision = latestRevisionNumber + 1
+                if err := r.Update(ctx, existingRev); err != nil </span><span class="cov0" title="0">{
+                        return err
+                }</span>
+                <span class="cov8" title="1">if err := r.updateCRRevisionLabel(ctx, cr, existingRev); err != nil </span><span class="cov0" title="0">{
+                        return err
+                }</span>
+        }
+        <span class="cov8" title="1">return nil</span>
+}
+
+func searchRevisionHistory(controllerRevList *v1.ControllerRevisionList, targetHash string) (*v1.ControllerRevision, error) <span class="cov8" title="1">{
+        for _, revision := range controllerRevList.Items </span><span class="cov8" title="1">{
+                revisionHash, err := hashControllerRevisionData(revision.Data)
+                if err != nil </span><span class="cov0" title="0">{
+                        return nil, err
+                }</span>
+                <span class="cov8" title="1">if revisionHash == targetHash </span><span class="cov8" title="1">{
+                        return &amp;revision, nil
+                }</span>
+        }
+        <span class="cov8" title="1">return nil, nil</span>
+}
+
+func (r *CustomReplicaSetReconciler) getLatestRevision(ctx context.Context, cr *customreplicasetv1.CustomReplicaSet, controllerRevisions *v1.ControllerRevisionList) (*v1.ControllerRevision, int64, error) <span class="cov8" title="1">{
+        latestRevision, err := r.getControllerRevisionAtIndex(ctx, cr, controllerRevisions, -1)
+        if err != nil </span><span class="cov0" title="0">{
+                return nil, -1, err
+        }</span>
+
+        <span class="cov8" title="1">if latestRevision == nil </span><span class="cov8" title="1">{
+                return nil, 0, nil
+        }</span>
+        <span class="cov8" title="1">return latestRevision, latestRevision.Revision, nil</span>
+}
+
+func convertCRSpecToJson(spec customreplicasetv1.CustomReplicaSetSpec) ([]byte, error) <span class="cov8" title="1">{
+        jsonSpec, err := json.Marshal(spec)
+        if err != nil </span><span class="cov0" title="0">{
+                fmt.Println("Failed to convert CustomReplicaSet spec to json")
+                return nil, err
+        }</span>
+        <span class="cov8" title="1">return jsonSpec, nil</span>
+}
+
+// Get the x-indexed oldest ControllerRevisionHistory Obj
+func (r *CustomReplicaSetReconciler) getControllerRevisionAtIndex(ctx context.Context, cr *customreplicasetv1.CustomReplicaSet, controllerRevisions *v1.ControllerRevisionList, index int) (*v1.ControllerRevision, error) <span class="cov8" title="1">{
+        if len(controllerRevisions.Items) == 0 </span><span class="cov8" title="1">{
+                fmt.Println("No controller revisions created yet")
+                return nil, nil
+        }</span> else<span class="cov8" title="1"> if index &lt; -1 || index &gt;= len(controllerRevisions.Items) </span><span class="cov0" title="0">{
+                fmt.Println("Invalid revision history index requested")
+                return nil, fmt.Errorf("invalid index requested, out of revision history range")
+        }</span>
+
+        // Return the latest ControllerRevision Object
+        <span class="cov8" title="1">if index == -1 </span><span class="cov8" title="1">{
+                latestRevision := &amp;controllerRevisions.Items[len(controllerRevisions.Items)-1]
+                return latestRevision, nil
+        }</span>
+
+        // Return the ControllerRevision at the specified index
+        <span class="cov8" title="1">revision := &amp;controllerRevisions.Items[index]
+        return revision, nil</span>
+}
+
+func (r *CustomReplicaSetReconciler) findCustomReplicaSet(ctx context.Context, req ctrl.Request, log logr.Logger) (customreplicasetv1.CustomReplicaSet, error) <span class="cov8" title="1">{
+        var crs customreplicasetv1.CustomReplicaSet
+        if err := r.Get(ctx, req.NamespacedName, &amp;crs); err != nil </span><span class="cov8" title="1">{
+                if errors.IsNotFound(err) </span><span class="cov8" title="1">{
+                        log.Error(err, "Unable to fetch the custom replica set object")
+                }</span>
+                <span class="cov8" title="1">return crs, err</span>
+        }
+        <span class="cov8" title="1">return crs, nil</span>
+}
+
+func (r *CustomReplicaSetReconciler) findChildPods(ctx context.Context, req ctrl.Request, log logr.Logger) (corev1.PodList, error) <span class="cov8" title="1">{
+        var childPods corev1.PodList
+        if err := r.List(ctx, &amp;childPods, client.InNamespace(req.Namespace)); err != nil </span><span class="cov0" title="0">{
+                log.Error(err, "Failed to list child pods")
+                return childPods, err
+        }</span>
+        <span class="cov8" title="1">return childPods, nil</span>
+}
+
+func (r *CustomReplicaSetReconciler) managePods(ctx context.Context, totalAvailablePods, availableStdPods, availableUpgPods int, crs *customreplicasetv1.CustomReplicaSet, childPods corev1.PodList, log logr.Logger) error <span class="cov0" title="0">{
+        if totalAvailablePods &lt; int(crs.Spec.Replicas) </span><span class="cov0" title="0">{
+                if err := r.createPods(ctx, totalAvailablePods, availableStdPods, availableUpgPods, crs, log); err != nil </span><span class="cov0" title="0">{
+                        log.Error(err, "Failed to create pods")
+                        return err
+                }</span>
+        } else<span class="cov0" title="0"> if totalAvailablePods &gt; int(crs.Spec.Replicas) </span><span class="cov0" title="0">{
+                if err := r.deletePods(ctx, totalAvailablePods, availableStdPods, availableUpgPods, crs, childPods, log); err != nil </span><span class="cov0" title="0">{
+                        log.Error(err, "Failed to delete pods")
+                        return err
+                }</span>
+        } else<span class="cov0" title="0"> {
+                if err := r.upgradeOrDowngradePods(ctx, availableStdPods, availableUpgPods, crs, childPods, log); err != nil </span><span class="cov0" title="0">{
+                        log.Error(err, "Failed to upgrade or downgrade pods")
+                        return err
+                }</span>
+        }
+        <span class="cov0" title="0">return nil</span>
+}
+
+func (r *CustomReplicaSetReconciler) createPods(ctx context.Context, totalPods, stdPods, upgPods int, cr *customreplicasetv1.CustomReplicaSet, log logr.Logger) error <span class="cov0" title="0">{
+        for totalPods &lt; int(cr.Spec.Replicas) </span><span class="cov0" title="0">{
+                var newPod *corev1.Pod
+                // Create any missing upgraded pods first
+                if upgPods &lt; int(cr.Spec.Partition) </span><span class="cov0" title="0">{
+                        newPod = r.newPodForCR(cr, true)
+                        upgPods++
+                }</span> else<span class="cov0" title="0"> {
+                        newPod = r.newPodForCR(cr, false)
+                        stdPods++
+                }</span>
+
+                <span class="cov0" title="0">if err := r.Create(ctx, newPod); err != nil </span><span class="cov0" title="0">{
+                        log.Error(err, "Unable to create new pod")
+                        return err
+                }</span>
+                <span class="cov0" title="0">fmt.Println("Created Pod")
+                totalPods++</span>
+        }
+        <span class="cov0" title="0">return nil</span>
+}
+
+func (r *CustomReplicaSetReconciler) deletePods(ctx context.Context, totalPods, stdPods, upgPods int, cr *customreplicasetv1.CustomReplicaSet, childPods corev1.PodList, log logr.Logger) error <span class="cov0" title="0">{
+        podsToDelete := totalPods - int(cr.Spec.Replicas)
+        upgPodsToDelete := upgPods - int(cr.Spec.Partition)
+        stdPodsToDelete := podsToDelete - upgPodsToDelete
+
+        for _, pod := range childPods.Items </span><span class="cov0" title="0">{
+                if pod.Status.Phase == corev1.PodRunning || pod.Status.Phase == corev1.PodPending </span><span class="cov0" title="0">{
+                        if strings.Contains(pod.ObjectMeta.Name, "upgraded") </span><span class="cov0" title="0">{
+                                if upgPodsToDelete &gt; 0 </span><span class="cov0" title="0">{
+                                        upgPodsToDelete--
+                                }</span> else<span class="cov0" title="0"> {
+                                        continue</span>
+                                }
+                        } else<span class="cov0" title="0"> {
+                                if stdPodsToDelete &gt; 0 </span><span class="cov0" title="0">{
+                                        stdPodsToDelete--
+                                }</span> else<span class="cov0" title="0"> {
+                                        continue</span>
+                                }
+                        }
+
+                        <span class="cov0" title="0">if err := r.Delete(ctx, &amp;pod); err != nil </span><span class="cov0" title="0">{
+                                log.Error(err, "Unable to delete pod")
+                                return err
+                        }</span>
+                        <span class="cov0" title="0">fmt.Println("Delete Pod")
+                        totalPods--
+                        if totalPods == int(cr.Spec.Replicas) </span><span class="cov0" title="0">{
+                                break</span>
+                        }
+                }
+        }
+        <span class="cov0" title="0">return nil</span>
+}
+
+func (r *CustomReplicaSetReconciler) upgradeOrDowngradePods(ctx context.Context, stdPods, upgPods int, cr *customreplicasetv1.CustomReplicaSet, childPods corev1.PodList, log logr.Logger) error <span class="cov0" title="0">{
+        // Check if we need to upgrade or downgrade any pods
+        podsToUpgrade := int(cr.Spec.Partition) - upgPods
+        if podsToUpgrade &gt; 0 </span><span class="cov0" title="0">{
+                if err := r.upgradePods(ctx, podsToUpgrade, cr, childPods, log); err != nil </span><span class="cov0" title="0">{
+                        log.Error(err, "Unable to upgrade pod")
+                        return err
+                }</span>
+
+        } else<span class="cov0" title="0"> if podsToUpgrade &lt; 0 </span><span class="cov0" title="0">{
+                if err := r.downgradePods(ctx, podsToUpgrade, cr, childPods, log); err != nil </span><span class="cov0" title="0">{
+                        log.Error(err, "Unable to downgrade pod")
+                        return err
+                }</span>
+        }
+        <span class="cov0" title="0">return nil</span>
+}
+
+func (r *CustomReplicaSetReconciler) upgradePods(ctx context.Context, podsToUpgrade int, cr *customreplicasetv1.CustomReplicaSet, childPods corev1.PodList, log logr.Logger) error <span class="cov0" title="0">{
+        for _, pod := range childPods.Items </span><span class="cov0" title="0">{
+                if pod.Status.Phase == corev1.PodRunning || pod.Status.Phase == corev1.PodPending </span><span class="cov0" title="0">{
+                        // Upgrade a standard pod
+                        if !strings.Contains(pod.ObjectMeta.Name, "upgraded") </span><span class="cov0" title="0">{
+                                if err := r.Delete(ctx, &amp;pod); err != nil </span><span class="cov0" title="0">{
+                                        log.Error(err, "Unable to delete pod")
+                                        return err
+                                }</span>
+
+                                <span class="cov0" title="0">newPod := r.newPodForCR(cr, true)
+                                if err := r.Create(ctx, newPod); err != nil </span><span class="cov0" title="0">{
+                                        log.Error(err, "Unable to create new pod")
+                                        return err
+                                }</span>
+
+                                <span class="cov0" title="0">fmt.Println("Upgraded Pod")
+
+                                podsToUpgrade--
+                                if podsToUpgrade == 0 </span><span class="cov0" title="0">{
+                                        break</span>
+                                }
+                        }
+                }
+        }
+        <span class="cov0" title="0">return nil</span>
+}
+
+func (r *CustomReplicaSetReconciler) downgradePods(ctx context.Context, podsToUpgrade int, cr *customreplicasetv1.CustomReplicaSet, childPods corev1.PodList, log logr.Logger) error <span class="cov0" title="0">{
+        podsToDowngrade := podsToUpgrade * -1
+
+        for _, pod := range childPods.Items </span><span class="cov0" title="0">{
+                if pod.Status.Phase == corev1.PodRunning || pod.Status.Phase == corev1.PodPending </span><span class="cov0" title="0">{
+                        // Downgrade an upgraded pod to std
+                        if strings.Contains(pod.ObjectMeta.Name, "upgraded") </span><span class="cov0" title="0">{
+                                if err := r.Delete(ctx, &amp;pod); err != nil </span><span class="cov0" title="0">{
+                                        log.Error(err, "Unable to delete pod")
+                                        return err
+                                }</span>
+
+                                <span class="cov0" title="0">newPod := r.newPodForCR(cr, false)
+                                if err := r.Create(ctx, newPod); err != nil </span><span class="cov0" title="0">{
+                                        log.Error(err, "Unable to create new pod")
+                                        return err
+                                }</span>
+
+                                <span class="cov0" title="0">fmt.Println("Downgraded Pod")
+
+                                podsToDowngrade--
+                                if podsToDowngrade == 0 </span><span class="cov0" title="0">{
+                                        break</span>
+                                }
+                        }
+                }
+        }
+        <span class="cov0" title="0">return nil</span>
+}
+
+func (r *CustomReplicaSetReconciler) newPodForCR(cr *customreplicasetv1.CustomReplicaSet, upgraded bool) *corev1.Pod <span class="cov0" title="0">{
+        // Create label obj
+        labels := map[string]string{
+                "custom": cr.Name,
+        }
+
+        t := time.Now()
+        timestamp := fmt.Sprintf("%d%d%d%d", t.Hour(), t.Minute(), t.Second(), t.Nanosecond())
+
+        var newPodName string
+        if upgraded </span><span class="cov0" title="0">{
+                newPodName = cr.Name + "-pod-upgraded-" + timestamp
+        }</span> else<span class="cov0" title="0"> {
+                newPodName = cr.Name + "-pod-" + timestamp
+        }</span>
+
+        // Create pod using the template spec provided in the CustomReplicaSet
+        <span class="cov0" title="0">newPod := &amp;corev1.Pod{
+                ObjectMeta: metav1.ObjectMeta{
+                        Name:      newPodName,
+                        Namespace: cr.Namespace,
+                        Labels:    labels,
+                },
+                Spec: cr.Spec.Template.Spec,
+        }
+
+        for i := range newPod.Spec.Containers </span><span class="cov0" title="0">{
+                if upgraded </span><span class="cov0" title="0">{
+                        newPod.Spec.Containers[i].Image = "busybox:latest"
+                }</span> else<span class="cov0" title="0"> {
+                        newPod.Spec.Containers[i].Image = "busybox"
+                }</span>
+        }
+
+        // Set the CustomReplicaSet instance as the owner and controller
+        <span class="cov0" title="0">if err := ctrl.SetControllerReference(cr, newPod, r.Scheme); err != nil </span><span class="cov0" title="0">{
+                fmt.Println("Could not set this instance to the customreplicaset controller")
+        }</span>
+        <span class="cov0" title="0">return newPod</span>
+}
+
+func countAvailablePods(pods []corev1.Pod) (int, int) <span class="cov0" title="0">{
+        availableStdPods, availableUpgPods := 0, 0
+        for _, pod := range pods </span><span class="cov0" title="0">{
+                // Check if pod exists
+                if pod.Status.Phase == corev1.PodRunning || pod.Status.Phase == corev1.PodPending </span><span class="cov0" title="0">{
+                        container := pod.Spec.Containers[0]
+                        if strings.HasSuffix(container.Image, ":latest") </span><span class="cov0" title="0">{
+                                availableUpgPods++
+                        }</span> else<span class="cov0" title="0"> {
+                                availableStdPods++
+                        }</span>
+                }
+        }
+        <span class="cov0" title="0">fmt.Println("Current available standard pods", availableStdPods, "upgraded pods", availableUpgPods)
+        return availableStdPods, availableUpgPods</span>
+}
+
+// SetupWithManager sets up the controller with the Manager.
+func (r *CustomReplicaSetReconciler) SetupWithManager(mgr ctrl.Manager) error <span class="cov0" title="0">{
+        return ctrl.NewControllerManagedBy(mgr).
+                For(&amp;customreplicasetv1.CustomReplicaSet{}).
+                Owns(&amp;corev1.Pod{}).
+                Complete(r)
+}</span>
+</pre>
+		
+		</div>
+	</body>
+	<script>
+	(function() {
+		var files = document.getElementById('files');
+		var visible;
+		files.addEventListener('change', onChange, false);
+		function select(part) {
+			if (visible)
+				visible.style.display = 'none';
+			visible = document.getElementById(part);
+			if (!visible)
+				return;
+			files.value = part;
+			visible.style.display = 'block';
+			location.hash = part;
+		}
+		function onChange() {
+			select(files.value);
+			window.scrollTo(0, 0);
+		}
+		if (location.hash != "") {
+			select(location.hash.substr(1));
+		}
+		if (!visible) {
+			select("file0");
+		}
+	})();
+	</script>
+</html>
