@@ -108,7 +108,7 @@ func TestManageControllerHistory(t *testing.T) {
 			Scheme: scheme,
 		}
 
-		err := reconciler.manageControllerRevisionHistory(ctx, cr)
+		_, err := reconciler.manageControllerRevisionHistory(ctx, cr)
 		assert.NoError(t, err)
 		assert.True(t, strings.HasPrefix(cr.Labels["latestRevisionName"], fmt.Sprintf("%s-controller-revision-", cr.Name)))
 		assert.Equal(t, cr.Labels["latestRevisionNumber"], "1")
@@ -157,7 +157,7 @@ func TestManageControllerHistory(t *testing.T) {
 			Scheme: scheme,
 		}
 
-		err = reconciler.manageControllerRevisionHistory(ctx, cr)
+		_, err = reconciler.manageControllerRevisionHistory(ctx, cr)
 		assert.NoError(t, err)
 
 		revisionList := v1.ControllerRevisionList{}
@@ -373,7 +373,7 @@ func TestCreateControllerRevision(t *testing.T) {
 		}
 
 		latestRevisionNumber := 1
-		err := reconciler.createControllerRevision(ctx, cr, controllerRevList, revisionData, int64(latestRevisionNumber))
+		_, err := reconciler.createControllerRevision(ctx, cr, controllerRevList, revisionData, int64(latestRevisionNumber))
 
 		assert.NoError(t, err)
 		assert.True(t, strings.HasPrefix(cr.Labels["latestRevisionName"], fmt.Sprintf("%s-controller-revision-", cr.Name)))
@@ -414,7 +414,7 @@ func TestCreateControllerRevision(t *testing.T) {
 		}
 
 		revisionNum := 5
-		err := reconciler.createControllerRevision(ctx, cr, controllerRevList, revisionData, int64(revisionNum))
+		_, err := reconciler.createControllerRevision(ctx, cr, controllerRevList, revisionData, int64(revisionNum))
 		assert.NoError(t, err)
 		assert.True(t, strings.HasPrefix(cr.Labels["latestRevisionName"], fmt.Sprintf("%s-controller-revision-", cr.Name)))
 		assert.Equal(t, cr.Labels["latestRevisionNumber"], "6")
@@ -425,7 +425,7 @@ func TestCreateControllerRevision(t *testing.T) {
 		assert.Equal(t, len(revisionList.Items), 1)
 
 		revisionNum = 6
-		err = reconciler.createControllerRevision(ctx, cr, revisionList, revisionData, int64(revisionNum))
+		_, err = reconciler.createControllerRevision(ctx, cr, revisionList, revisionData, int64(revisionNum))
 		assert.NoError(t, err)
 		assert.True(t, strings.HasPrefix(cr.Labels["latestRevisionName"], fmt.Sprintf("%s-controller-revision-", cr.Name)))
 		assert.Equal(t, cr.Labels["latestRevisionNumber"], "7")
