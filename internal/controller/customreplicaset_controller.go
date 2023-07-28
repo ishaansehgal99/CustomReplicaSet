@@ -421,7 +421,6 @@ func (r *CustomReplicaSetReconciler) deletePods(ctx context.Context, cr *customr
 
 func (r *CustomReplicaSetReconciler) upgradeOrDowngradePods(ctx context.Context, cr *customreplicasetv1.CustomReplicaSet, totalPods int, podsPerRevision map[int][]*corev1.Pod, latestRevision *v1.ControllerRevision, childPods corev1.PodList) error {
 	// Check if we need to upgrade or downgrade any pods
-	fmt.Println("ISH", latestRevision.Revision, latestRevision)
 	latestPods, ok := podsPerRevision[int(latestRevision.Revision)]
 	if !ok {
 		fmt.Println("No pods found of latest revision")
@@ -430,15 +429,8 @@ func (r *CustomReplicaSetReconciler) upgradeOrDowngradePods(ctx context.Context,
 
 	podsToUpgrade := int(cr.Spec.Partition) - len(latestPods)
 	if podsToUpgrade > 0 {
-		fmt.Println("ATTEMPT UPGRADE")
 		if err := r.upgradePods(ctx, cr, podsToUpgrade, podsPerRevision, latestRevision, childPods); err != nil {
 			fmt.Println("Unable to upgrade pod", err)
-			return err
-		}
-	} else if podsToUpgrade < 0 {
-		podsToDowngrade := podsToUpgrade * -1
-		if err := r.downgradePods(ctx, cr, podsToDowngrade, podsPerRevision, latestRevision, childPods); err != nil {
-			fmt.Println("Unable to downgrade pod", err)
 			return err
 		}
 	}
@@ -459,35 +451,6 @@ func (r *CustomReplicaSetReconciler) upgradePods(ctx context.Context, cr *custom
 	}
 
 	fmt.Printf("Upgraded %d Pods\n", podsToUpgrade)
-	return nil
-}
-
-func (r *CustomReplicaSetReconciler) downgradePods(ctx context.Context, cr *customreplicasetv1.CustomReplicaSet, podsToDowngrade int, podsPerRevision map[int][]*corev1.Pod, latestRevision *v1.ControllerRevision, childPods corev1.PodList) error {
-	// Delete newest pods
-	if err := r.deletePods(ctx, cr, podsToDowngrade, podsPerRevision, childPods, true); err != nil {
-		fmt.Println("Unable to delete pods", err)
-		return err
-	}
-
-	controllerRevList, err := r.getAllControllerRevisions(ctx, cr, true)
-	if err != nil {
-		fmt.Println("Unable to get all controller revisions", err)
-		return err
-	}
-
-	oldestRevision, err := r.getControllerRevisionAtIndex(ctx, cr, controllerRevList, 0)
-	if err != nil {
-		fmt.Println("Unable to get oldest controller revision", err)
-		return err
-	}
-
-	// Create older ones
-	if err := r.createPods(ctx, cr, podsToDowngrade, podsPerRevision, oldestRevision); err != nil {
-		fmt.Println("Failed to create pods", err)
-		return err
-	}
-
-	fmt.Printf("Downgraded %d Pods\n", podsToDowngrade)
 	return nil
 }
 
