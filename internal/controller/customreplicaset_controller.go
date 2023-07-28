@@ -77,11 +77,7 @@ func (r *CustomReplicaSetReconciler) Reconcile(ctx context.Context, req ctrl.Req
 	}
 
 	// Apply any necessary updates to controller revision history
-<<<<<<< HEAD
-	_, err = r.manageControllerRevisionHistory(ctx, &crs)
-=======
 	latestRevision, err := r.manageControllerRevisionHistory(ctx, &crs)
->>>>>>> d29a12a (Completed adding and removing pods appropriately)
 	if err != nil {
 		return ctrl.Result{Requeue: true}, err
 	}
@@ -343,29 +339,30 @@ func (r *CustomReplicaSetReconciler) findChildPods(ctx context.Context, req ctrl
 
 func (r *CustomReplicaSetReconciler) managePods(ctx context.Context, crs *customreplicasetv1.CustomReplicaSet, childPods corev1.PodList, podsPerRevision map[int][]*corev1.Pod, totalAvailPods int, latestRevision *v1.ControllerRevision) error {
 	if totalAvailPods < int(crs.Spec.Replicas) {
-		if err := r.createPods(ctx, crs, totalAvailPods, podsPerRevision, latestRevision); err != nil {
+		podsToCreate := int(crs.Spec.Replicas) - totalAvailPods
+		if err := r.createPods(ctx, crs, podsToCreate, podsPerRevision, latestRevision); err != nil {
 			fmt.Println("Failed to create pods", err)
 			return err
 		}
 	} else if totalAvailPods > int(crs.Spec.Replicas) {
-		if err := r.deletePods(ctx, crs, totalAvailPods, podsPerRevision, latestRevision, childPods); err != nil {
+		podsToDelete := totalAvailPods - int(crs.Spec.Replicas)
+		if err := r.deletePods(ctx, crs, podsToDelete, podsPerRevision, childPods, false); err != nil {
 			fmt.Println("Failed to delete pods", err)
 			return err
 		}
+	} else {
+		if err := r.upgradeOrDowngradePods(ctx, crs, totalAvailPods, podsPerRevision, latestRevision, childPods); err != nil {
+			fmt.Println("Failed to upgrade or downgrade pods", err)
+			return err
+		}
 	}
-	// } else {
-	// 	if err := r.upgradeOrDowngradePods(ctx, crs, totalAvailPods, podsPerRevision, latestRevision, childPods); err != nil {
-	// 		fmt.Println("Failed to upgrade or downgrade pods", err)
-	// 		return err
-	// 	}
-	// }
 	return nil
 }
 
-func (r *CustomReplicaSetReconciler) createPods(ctx context.Context, cr *customreplicasetv1.CustomReplicaSet, totalPods int, podsPerRevision map[int][]*corev1.Pod, latestRevision *v1.ControllerRevision) error {
-	for totalPods < int(cr.Spec.Replicas) {
+func (r *CustomReplicaSetReconciler) createPods(ctx context.Context, cr *customreplicasetv1.CustomReplicaSet, podsToCreate int, podsPerRevision map[int][]*corev1.Pod, revision *v1.ControllerRevision) error {
+	for podsToCreate > 0 {
 		// If we are short pods, create new pods of latest revision
-		newPod, err := r.newPodForCR(cr, latestRevision)
+		newPod, err := r.newPodForCR(cr, revision)
 		if err != nil {
 			fmt.Println("Unable to initialize new pod for creation", err)
 			return err
@@ -376,14 +373,13 @@ func (r *CustomReplicaSetReconciler) createPods(ctx context.Context, cr *customr
 			return err
 		}
 		fmt.Println("Created Pod")
-		totalPods++
+		podsToCreate--
 	}
 	return nil
 }
 
-func (r *CustomReplicaSetReconciler) deletePods(ctx context.Context, cr *customreplicasetv1.CustomReplicaSet, totalPods int, podsPerRevision map[int][]*corev1.Pod, latestRevision *v1.ControllerRevision, childPods corev1.PodList) error {
-	podsToDelete := totalPods - int(cr.Spec.Replicas)
-	sortedKeys := sortMap(podsPerRevision)
+func (r *CustomReplicaSetReconciler) deletePods(ctx context.Context, cr *customreplicasetv1.CustomReplicaSet, podsToDelete int, podsPerRevision map[int][]*corev1.Pod, childPods corev1.PodList, reverse bool) error {
+	sortedKeys := sortKeys(podsPerRevision, reverse)
 	finishedDeletion := false
 
 	for _, key := range sortedKeys {
@@ -423,90 +419,80 @@ func (r *CustomReplicaSetReconciler) deletePods(ctx context.Context, cr *customr
 	return nil
 }
 
-// func (r *CustomReplicaSetReconciler) upgradeOrDowngradePods(ctx context.Context, cr *customreplicasetv1.CustomReplicaSet, totalPods int, podsPerRevision *sortedmap.SortedMap, latestRevision *v1.ControllerRevision, childPods corev1.PodList) error {
-// 	// Check if we need to upgrade or downgrade any pods
-// 	keys := podsPerRevision.Keys()
-// 	latestPods, ok := podsPerRevision.Get(keys[len(keys)-1])
-// 	if !ok {
-// 		fmt.Println("Could not get pods of latest revision")
-// 		return fmt.Errorf("Could not get pods of latest revision")
-// 	}
-// 	podsToUpgrade := int(cr.Spec.Partition) - len(latestPods)
-// 	if podsToUpgrade > 0 {
-// 		if err := r.upgradePods(ctx, podsToUpgrade, cr, childPods); err != nil {
-// 			fmt.Println("Unable to upgrade pod", err)
-// 			return err
-// 		}
+func (r *CustomReplicaSetReconciler) upgradeOrDowngradePods(ctx context.Context, cr *customreplicasetv1.CustomReplicaSet, totalPods int, podsPerRevision map[int][]*corev1.Pod, latestRevision *v1.ControllerRevision, childPods corev1.PodList) error {
+	// Check if we need to upgrade or downgrade any pods
+	fmt.Println("ISH", latestRevision.Revision, latestRevision)
+	latestPods, ok := podsPerRevision[int(latestRevision.Revision)]
+	if !ok {
+		fmt.Println("No pods found of latest revision")
+		latestPods = []*corev1.Pod{}
+	}
 
-// 	} else if podsToUpgrade < 0 {
-// 		if err := r.downgradePods(ctx, podsToUpgrade, cr, childPods); err != nil {
-// 			fmt.Println("Unable to downgrade pod", err)
-// 			return err
-// 		}
-// 	}
-// 	return nil
-// }
+	podsToUpgrade := int(cr.Spec.Partition) - len(latestPods)
+	if podsToUpgrade > 0 {
+		fmt.Println("ATTEMPT UPGRADE")
+		if err := r.upgradePods(ctx, cr, podsToUpgrade, podsPerRevision, latestRevision, childPods); err != nil {
+			fmt.Println("Unable to upgrade pod", err)
+			return err
+		}
+	} else if podsToUpgrade < 0 {
+		podsToDowngrade := podsToUpgrade * -1
+		if err := r.downgradePods(ctx, cr, podsToDowngrade, podsPerRevision, latestRevision, childPods); err != nil {
+			fmt.Println("Unable to downgrade pod", err)
+			return err
+		}
+	}
+	return nil
+}
 
-// func (r *CustomReplicaSetReconciler) upgradePods(ctx context.Context, podsToUpgrade int, cr *customreplicasetv1.CustomReplicaSet, childPods corev1.PodList) error {
-// 	for _, pod := range childPods.Items {
-// 		if pod.Status.Phase == corev1.PodRunning || pod.Status.Phase == corev1.PodPending {
-// 			// Upgrade a standard pod
-// 			if !strings.Contains(pod.ObjectMeta.Name, "upgraded") {
-// 				if err := r.Delete(ctx, &pod); err != nil {
-// 					fmt.Println("Unable to delete pod", err)
-// 					return err
-// 				}
+func (r *CustomReplicaSetReconciler) upgradePods(ctx context.Context, cr *customreplicasetv1.CustomReplicaSet, podsToUpgrade int, podsPerRevision map[int][]*corev1.Pod, latestRevision *v1.ControllerRevision, childPods corev1.PodList) error {
+	// Delete oldest pods
+	if err := r.deletePods(ctx, cr, podsToUpgrade, podsPerRevision, childPods, false); err != nil {
+		fmt.Println("Unable to delete pods", err)
+		return err
+	}
 
-// 				newPod := r.newPodForCR(cr, true)
-// 				if err := r.Create(ctx, newPod); err != nil {
-// 					fmt.Println("Unable to create new pod", err)
-// 					return err
-// 				}
+	// Create new ones
+	if err := r.createPods(ctx, cr, podsToUpgrade, podsPerRevision, latestRevision); err != nil {
+		fmt.Println("Failed to create pods", err)
+		return err
+	}
 
-// 				fmt.Println("Upgraded Pod")
+	fmt.Printf("Upgraded %d Pods\n", podsToUpgrade)
+	return nil
+}
 
-// 				podsToUpgrade--
-// 				if podsToUpgrade == 0 {
-// 					break
-// 				}
-// 			}
-// 		}
-// 	}
-// 	return nil
-// }
+func (r *CustomReplicaSetReconciler) downgradePods(ctx context.Context, cr *customreplicasetv1.CustomReplicaSet, podsToDowngrade int, podsPerRevision map[int][]*corev1.Pod, latestRevision *v1.ControllerRevision, childPods corev1.PodList) error {
+	// Delete newest pods
+	if err := r.deletePods(ctx, cr, podsToDowngrade, podsPerRevision, childPods, true); err != nil {
+		fmt.Println("Unable to delete pods", err)
+		return err
+	}
 
-// func (r *CustomReplicaSetReconciler) downgradePods(ctx context.Context, podsToUpgrade int, cr *customreplicasetv1.CustomReplicaSet, childPods corev1.PodList, log logr.Logger) error {
-// 	podsToDowngrade := podsToUpgrade * -1
+	controllerRevList, err := r.getAllControllerRevisions(ctx, cr, true)
+	if err != nil {
+		fmt.Println("Unable to get all controller revisions", err)
+		return err
+	}
 
-// 	for _, pod := range childPods.Items {
-// 		if pod.Status.Phase == corev1.PodRunning || pod.Status.Phase == corev1.PodPending {
-// 			// Downgrade an upgraded pod to std
-// 			if strings.Contains(pod.ObjectMeta.Name, "upgraded") {
-// 				if err := r.Delete(ctx, &pod); err != nil {
-// 					log.Error(err, "Unable to delete pod")
-// 					return err
-// 				}
+	oldestRevision, err := r.getControllerRevisionAtIndex(ctx, cr, controllerRevList, 0)
+	if err != nil {
+		fmt.Println("Unable to get oldest controller revision", err)
+		return err
+	}
 
-// 				newPod := r.newPodForCR(cr, false)
-// 				if err := r.Create(ctx, newPod); err != nil {
-// 					log.Error(err, "Unable to create new pod")
-// 					return err
-// 				}
+	// Create older ones
+	if err := r.createPods(ctx, cr, podsToDowngrade, podsPerRevision, oldestRevision); err != nil {
+		fmt.Println("Failed to create pods", err)
+		return err
+	}
 
-// 				fmt.Println("Downgraded Pod")
+	fmt.Printf("Downgraded %d Pods\n", podsToDowngrade)
+	return nil
+}
 
-// 				podsToDowngrade--
-// 				if podsToDowngrade == 0 {
-// 					break
-// 				}
-// 			}
-// 		}
-// 	}
-// 	return nil
-// }
-
-func (r *CustomReplicaSetReconciler) newPodForCR(cr *customreplicasetv1.CustomReplicaSet, latestRevision *v1.ControllerRevision) (*corev1.Pod, error) {
-	latestRevStr := strconv.Itoa(int(latestRevision.Revision))
+func (r *CustomReplicaSetReconciler) newPodForCR(cr *customreplicasetv1.CustomReplicaSet, revision *v1.ControllerRevision) (*corev1.Pod, error) {
+	latestRevStr := strconv.Itoa(int(revision.Revision))
 
 	t := time.Now()
 	// timestamp := fmt.Sprintf("%d%d%d%d", t.Hour(), t.Minute(), t.Second(), t.Nanosecond())
@@ -515,13 +501,13 @@ func (r *CustomReplicaSetReconciler) newPodForCR(cr *customreplicasetv1.CustomRe
 
 	// Unmarshal the raw JSON into a PodTemplateSpec
 	var crsSpec customreplicasetv1.CustomReplicaSetSpec
-	err := json.Unmarshal(latestRevision.Data.Raw, &crsSpec)
+	err := json.Unmarshal(revision.Data.Raw, &crsSpec)
 	if err != nil {
 		return nil, err
 	}
 
 	// Assign the revision to the template's labels
-	crsSpec.Template.Metadata.Labels["revision"] = fmt.Sprintf("%d", latestRevision.Revision)
+	crsSpec.Template.Metadata.Labels["revision"] = fmt.Sprintf("%d", revision.Revision)
 	crsSpec.Template.Metadata.Labels["owner"] = cr.Name
 
 	// Create a new Pod object from the template
