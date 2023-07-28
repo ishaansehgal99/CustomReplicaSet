@@ -351,7 +351,7 @@ func (r *CustomReplicaSetReconciler) managePods(ctx context.Context, crs *custom
 			return err
 		}
 	} else {
-		if err := r.upgradeOrDowngradePods(ctx, crs, totalAvailPods, podsPerRevision, latestRevision, childPods); err != nil {
+		if err := r.checkUpgradePods(ctx, crs, totalAvailPods, podsPerRevision, latestRevision, childPods); err != nil {
 			fmt.Println("Failed to upgrade or downgrade pods", err)
 			return err
 		}
@@ -419,8 +419,8 @@ func (r *CustomReplicaSetReconciler) deletePods(ctx context.Context, cr *customr
 	return nil
 }
 
-func (r *CustomReplicaSetReconciler) upgradeOrDowngradePods(ctx context.Context, cr *customreplicasetv1.CustomReplicaSet, totalPods int, podsPerRevision map[int][]*corev1.Pod, latestRevision *v1.ControllerRevision, childPods corev1.PodList) error {
-	// Check if we need to upgrade or downgrade any pods
+func (r *CustomReplicaSetReconciler) checkUpgradePods(ctx context.Context, cr *customreplicasetv1.CustomReplicaSet, totalPods int, podsPerRevision map[int][]*corev1.Pod, latestRevision *v1.ControllerRevision, childPods corev1.PodList) error {
+	// Check if we need to upgrade any pods
 	latestPods, ok := podsPerRevision[int(latestRevision.Revision)]
 	if !ok {
 		fmt.Println("No pods found of latest revision")
