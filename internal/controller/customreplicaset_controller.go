@@ -411,12 +411,6 @@ func (r *CustomReplicaSetReconciler) managePods(ctx context.Context, crs *custom
 			return err
 		}
 	}
-	// } else {
-	// 	if err := r.upgradeOrDowngradePods(ctx, crs, totalAvailPods, podsPerRevision, latestRevision, childPods); err != nil {
-	// 		fmt.Println("Failed to upgrade or downgrade pods", err)
-	// 		return err
-	// 	}
-	// }
 	return nil
 }
 
@@ -645,7 +639,13 @@ func sortMap(podsPerRevision map[int][]*corev1.Pod) []int {
 		keys = append(keys, k)
 	}
 
-	sort.Ints(keys)
+	if reverse {
+		sort.Slice(keys, func(i, j int) bool {
+			return keys[i] > keys[j]
+		})
+	} else {
+		sort.Ints(keys)
+	}
 	return keys
 }
 
