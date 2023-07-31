@@ -543,6 +543,34 @@ func countAvailablePods(pods []corev1.Pod) (int, int) {
 	return availableStdPods, availableUpgPods
 }
 
+func printMap(podsPerRevision map[int][]*corev1.Pod) {
+	if len(podsPerRevision) == 0 {
+		fmt.Println("Empty map")
+		return
+	}
+
+	for key, value := range podsPerRevision {
+		fmt.Printf("Key: %d, Length of Value: %d\n", key, len(value))
+		// fmt.Printf("Key: %d, Value: %v, Length of Value: %d\n", key, value, len(value))
+	}
+}
+
+func sortKeys(podsPerRevision map[int][]*corev1.Pod, reverse bool) []int {
+	keys := make([]int, 0, len(podsPerRevision))
+	for k := range podsPerRevision {
+		keys = append(keys, k)
+	}
+
+	if reverse {
+		sort.Slice(keys, func(i, j int) bool {
+			return keys[i] > keys[j]
+		})
+	} else {
+		sort.Ints(keys)
+	}
+	return keys
+}
+
 // SetupWithManager sets up the controller with the Manager.
 func (r *CustomReplicaSetReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
