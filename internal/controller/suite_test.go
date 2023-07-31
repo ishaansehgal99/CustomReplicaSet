@@ -108,10 +108,12 @@ func TestManageControllerHistory(t *testing.T) {
 			Scheme: scheme,
 		}
 
-		_, err := reconciler.manageControllerRevisionHistory(ctx, cr)
+		latestRevision, err := reconciler.manageControllerRevisionHistory(ctx, cr)
 		assert.NoError(t, err)
 		assert.True(t, strings.HasPrefix(cr.Labels["latestRevisionName"], fmt.Sprintf("%s-controller-revision-", cr.Name)))
 		assert.Equal(t, cr.Labels["latestRevisionNumber"], "1")
+		assert.True(t, strings.HasPrefix(latestRevision.Name, fmt.Sprintf("%s-controller-revision-", cr.Name)))
+		assert.Equal(t, latestRevision.Revision, int64(1))
 
 		revisionList := v1.ControllerRevisionList{}
 		err = reconciler.Client.List(ctx, &revisionList)
@@ -157,8 +159,10 @@ func TestManageControllerHistory(t *testing.T) {
 			Scheme: scheme,
 		}
 
-		_, err = reconciler.manageControllerRevisionHistory(ctx, cr)
+		latestRevision, err := reconciler.manageControllerRevisionHistory(ctx, cr)
 		assert.NoError(t, err)
+		assert.True(t, strings.HasPrefix(latestRevision.Name, fmt.Sprintf("%s-controller-revision-", cr.Name)))
+		assert.Equal(t, latestRevision.Revision, int64(1))
 
 		revisionList := v1.ControllerRevisionList{}
 		err = reconciler.Client.List(ctx, &revisionList)
@@ -373,11 +377,14 @@ func TestCreateControllerRevision(t *testing.T) {
 		}
 
 		latestRevisionNumber := 1
-		_, err := reconciler.createControllerRevision(ctx, cr, controllerRevList, revisionData, int64(latestRevisionNumber))
+		latestRevision, err := reconciler.createControllerRevision(ctx, cr, controllerRevList, revisionData, int64(latestRevisionNumber))
 
 		assert.NoError(t, err)
 		assert.True(t, strings.HasPrefix(cr.Labels["latestRevisionName"], fmt.Sprintf("%s-controller-revision-", cr.Name)))
 		assert.Equal(t, cr.Labels["latestRevisionNumber"], "2")
+
+		assert.True(t, strings.HasPrefix(latestRevision.Name, fmt.Sprintf("%s-controller-revision-", cr.Name)))
+		assert.Equal(t, latestRevision.Revision, int64(2))
 
 		revisionList := v1.ControllerRevisionList{}
 		err = reconciler.Client.List(ctx, &revisionList)
@@ -414,10 +421,13 @@ func TestCreateControllerRevision(t *testing.T) {
 		}
 
 		revisionNum := 5
-		_, err := reconciler.createControllerRevision(ctx, cr, controllerRevList, revisionData, int64(revisionNum))
+		latestRevision, err := reconciler.createControllerRevision(ctx, cr, controllerRevList, revisionData, int64(revisionNum))
 		assert.NoError(t, err)
 		assert.True(t, strings.HasPrefix(cr.Labels["latestRevisionName"], fmt.Sprintf("%s-controller-revision-", cr.Name)))
 		assert.Equal(t, cr.Labels["latestRevisionNumber"], "6")
+
+		assert.True(t, strings.HasPrefix(latestRevision.Name, fmt.Sprintf("%s-controller-revision-", cr.Name)))
+		assert.Equal(t, latestRevision.Revision, int64(6))
 
 		revisionList := &v1.ControllerRevisionList{}
 		err = reconciler.Client.List(ctx, revisionList)
@@ -425,10 +435,13 @@ func TestCreateControllerRevision(t *testing.T) {
 		assert.Equal(t, len(revisionList.Items), 1)
 
 		revisionNum = 6
-		_, err = reconciler.createControllerRevision(ctx, cr, revisionList, revisionData, int64(revisionNum))
+		latestRevision, err = reconciler.createControllerRevision(ctx, cr, revisionList, revisionData, int64(revisionNum))
 		assert.NoError(t, err)
 		assert.True(t, strings.HasPrefix(cr.Labels["latestRevisionName"], fmt.Sprintf("%s-controller-revision-", cr.Name)))
 		assert.Equal(t, cr.Labels["latestRevisionNumber"], "7")
+
+		assert.True(t, strings.HasPrefix(latestRevision.Name, fmt.Sprintf("%s-controller-revision-", cr.Name)))
+		assert.Equal(t, latestRevision.Revision, int64(7))
 
 		revisionList = &v1.ControllerRevisionList{}
 		err = reconciler.Client.List(ctx, revisionList)
