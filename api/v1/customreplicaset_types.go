@@ -17,7 +17,7 @@ limitations under the License.
 package v1
 
 import (
-	v1 "k8s.io/api/core/v1"
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
@@ -31,6 +31,11 @@ type PodStatusInfo struct {
 	RestartCount int32  `json:"restartCount"`
 }
 
+// type Revision struct {
+// 	CRSpecHash         string                    `json:"crspechash"`
+// 	ControllerRevision *appv1.ControllerRevision `json:"controllerrevision"`
+// }
+
 // CustomReplicaSetSpec defines the desired state of CustomReplicaSet
 type CustomReplicaSetSpec struct {
 	// INSERT ADDITIONAL SPEC FIELDS - desired state of cluster
@@ -40,7 +45,7 @@ type CustomReplicaSetSpec struct {
 	Replicas int32 `json:"replicas"`
 
 	// Stores Pod Spec used for creating new pods
-	Template v1.PodTemplateSpec `json:"template"`
+	Template corev1.PodTemplateSpec `json:"template"`
 
 	// Keep track of the number of upgraded replicas
 	Partition int32 `json:"partition"`
