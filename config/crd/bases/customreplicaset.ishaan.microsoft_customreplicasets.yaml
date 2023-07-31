@@ -50,16 +50,11 @@ spec:
                 description: Stores Pod Spec used for creating new pods
                 properties:
                   metadata:
-                    properties:
-                      labels:
-                        additionalProperties:
-                          type: string
-                        type: object
-                    required:
-                    - labels
+                    description: 'Standard object''s metadata. More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#metadata'
                     type: object
                   spec:
-                    description: PodSpec is a description of a pod.
+                    description: 'Specification of the desired behavior of the pod.
+                      More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#spec-and-status'
                     properties:
                       activeDeadlineSeconds:
                         description: Optional duration in seconds the pod may be active
@@ -7543,8 +7538,6 @@ spec:
                     required:
                     - containers
                     type: object
-                required:
-                - metadata
                 type: object
             required:
             - partition
