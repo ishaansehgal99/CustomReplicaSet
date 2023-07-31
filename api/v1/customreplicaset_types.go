@@ -17,7 +17,7 @@ limitations under the License.
 package v1
 
 import (
-	corev1 "k8s.io/api/core/v1"
+	v1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
@@ -31,51 +31,6 @@ type PodStatusInfo struct {
 	RestartCount int32  `json:"restartCount"`
 }
 
-type MetadataWithLabels struct {
-	Labels map[string]string `json:"labels"`
-}
-
-type PodTemplateSpecWithMetadata struct {
-	Metadata MetadataWithLabels `json:"metadata"`
-	Spec     corev1.PodSpec     `json:"spec,omitempty"`
-}
-
-// Need to define these methods for deep copying
-func (in *PodTemplateSpecWithMetadata) DeepCopyInto(out *PodTemplateSpecWithMetadata) {
-	*out = *in
-	out.Metadata = *(in.Metadata).DeepCopy()
-	out.Spec = *(in.Spec).DeepCopy()
-}
-
-func (in *PodTemplateSpecWithMetadata) DeepCopy() *PodTemplateSpecWithMetadata {
-	if in == nil {
-		return nil
-	}
-	out := new(PodTemplateSpecWithMetadata)
-	in.DeepCopyInto(out)
-	return out
-}
-
-func (in *MetadataWithLabels) DeepCopyInto(out *MetadataWithLabels) {
-	*out = *in
-	if in.Labels != nil {
-		in, out := &in.Labels, &out.Labels
-		*out = make(map[string]string, len(*in))
-		for key, val := range *in {
-			(*out)[key] = val
-		}
-	}
-}
-
-func (in *MetadataWithLabels) DeepCopy() *MetadataWithLabels {
-	if in == nil {
-		return nil
-	}
-	out := new(MetadataWithLabels)
-	in.DeepCopyInto(out)
-	return out
-}
-
 // CustomReplicaSetSpec defines the desired state of CustomReplicaSet
 type CustomReplicaSetSpec struct {
 	// INSERT ADDITIONAL SPEC FIELDS - desired state of cluster
@@ -85,7 +40,7 @@ type CustomReplicaSetSpec struct {
 	Replicas int32 `json:"replicas"`
 
 	// Stores Pod Spec used for creating new pods
-	Template PodTemplateSpecWithMetadata `json:"template"`
+	Template v1.PodTemplateSpec `json:"template"`
 
 	// Keep track of the number of upgraded replicas
 	Partition int32 `json:"partition"`

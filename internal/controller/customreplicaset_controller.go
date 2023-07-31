@@ -469,16 +469,15 @@ func (r *CustomReplicaSetReconciler) newPodForCR(cr *customreplicasetv1.CustomRe
 		return nil, err
 	}
 
-	// Assign the revision to the template's labels
-	crsSpec.Template.Metadata.Labels["revision"] = fmt.Sprintf("%d", revision.Revision)
-	crsSpec.Template.Metadata.Labels["owner"] = cr.Name
-
 	// Create a new Pod object from the template
 	newPod := &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      newPodName,
 			Namespace: cr.Namespace,
-			Labels:    crsSpec.Template.Metadata.Labels, // Copy labels from the template to the pod
+			Labels: map[string]string{
+				"owner":    cr.Name,
+				"revision": fmt.Sprintf("%d", revision.Revision),
+			},
 		},
 		Spec: crsSpec.Template.Spec, // Assign the template's spec to the pod
 	}
