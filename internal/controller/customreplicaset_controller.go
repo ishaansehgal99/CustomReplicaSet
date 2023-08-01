@@ -188,7 +188,7 @@ func (r *CustomReplicaSetReconciler) getAllControllerRevisions(ctx context.Conte
 }
 
 func (r *CustomReplicaSetReconciler) manageControllerRevisionHistory(ctx context.Context, cr *customreplicasetv1.CustomReplicaSet) (*v1.ControllerRevision, error) {
-	jsonSpec, err := convertCRSpecToJson(cr.Spec)
+	jsonSpec, err := convertPodTemplateToJson(cr.Spec.Template)
 	if err != nil {
 		return nil, err
 	}
@@ -287,10 +287,10 @@ func (r *CustomReplicaSetReconciler) getLatestRevision(ctx context.Context, cr *
 	return latestRevision, latestRevision.Revision, nil
 }
 
-func convertCRSpecToJson(spec customreplicasetv1.CustomReplicaSetSpec) ([]byte, error) {
-	jsonSpec, err := json.Marshal(spec)
+func convertPodTemplateToJson(template corev1.PodTemplateSpec) ([]byte, error) {
+	jsonSpec, err := json.Marshal(template)
 	if err != nil {
-		fmt.Println("Failed to convert CustomReplicaSet spec to json")
+		fmt.Println("Failed to convert Pod Template to json")
 		return nil, err
 	}
 	return jsonSpec, nil
@@ -454,8 +454,8 @@ func (r *CustomReplicaSetReconciler) newPodForCR(cr *customreplicasetv1.CustomRe
 	newPodName := fmt.Sprintf("%s-version-%s-%s", cr.Name, latestRevStr, timestamp)
 
 	// Unmarshal the raw JSON into a PodTemplateSpec
-	var crsSpec customreplicasetv1.CustomReplicaSetSpec
-	err := json.Unmarshal(revision.Data.Raw, &crsSpec)
+	var podTemplateSpec corev1.PodTemplateSpec
+	err := json.Unmarshal(revision.Data.Raw, &podTemplateSpec)
 	if err != nil {
 		return nil, err
 	}
@@ -470,7 +470,7 @@ func (r *CustomReplicaSetReconciler) newPodForCR(cr *customreplicasetv1.CustomRe
 				"revision": fmt.Sprintf("%d", revision.Revision),
 			},
 		},
-		Spec: crsSpec.Template.Spec, // Assign the template's spec to the pod
+		Spec: podTemplateSpec.Spec, // Assign the template's spec to the pod
 	}
 
 	// Set the CustomReplicaSet instance as the owner and controller

@@ -125,7 +125,7 @@ func TestManageControllerHistory(t *testing.T) {
 
 		assert.NoError(t, err)
 
-		jsonSpec, err := convertCRSpecToJson(cr.Spec)
+		jsonSpec, err := convertPodTemplateToJson(cr.Spec.Template)
 		assert.NoError(t, err)
 
 		revisionData := runtime.RawExtension{Raw: jsonSpec}
@@ -136,7 +136,7 @@ func TestManageControllerHistory(t *testing.T) {
 	})
 
 	t.Run("should use cached revision history", func(t *testing.T) {
-		jsonSpec, err := convertCRSpecToJson(cr.Spec)
+		jsonSpec, err := convertPodTemplateToJson(cr.Spec.Template)
 		assert.NoError(t, err)
 
 		currRevisionData := runtime.RawExtension{Raw: jsonSpec}
