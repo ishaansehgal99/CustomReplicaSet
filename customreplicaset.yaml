@@ -3,7 +3,7 @@ kind: CustomReplicaSet
 metadata: 
   name: customreplicaset-sample
 spec: 
-  replicas: 10
+  replicas: 8
   template:
     spec:
       restartPolicy: Never
@@ -11,5 +11,5 @@ spec:
       - name: busybox
         image: busybox:latest
         command: ["sleep", "3600"]
-  partition: 7  # Number of upgraded pods
+  partition: 5  # Number of upgraded pods
   revisionHistoryLimit: 20 # Max revision history stored
