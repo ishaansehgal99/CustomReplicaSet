@@ -388,15 +388,6 @@ func (r *CustomReplicaSetReconciler) deletePods(ctx context.Context, cr *customr
 		}
 		for _, pod := range podsPerRevision[key] {
 			if pod.Status.Phase == corev1.PodRunning || pod.Status.Phase == corev1.PodPending {
-				if pod.DeletionTimestamp != nil {
-					// Pod is already being deleted, skip to the next one
-					podsToDelete--
-					if podsToDelete == 0 {
-						finishedDeletion = true
-						break
-					}
-					continue
-				}
 				if err := r.Delete(ctx, pod); err != nil {
 					fmt.Println("Unable to delete pod", err)
 					return err
