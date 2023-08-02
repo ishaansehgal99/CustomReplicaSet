@@ -30,6 +30,7 @@ import (
 	"github.com/stretchr/testify/assert"
 
 	v1 "k8s.io/api/apps/v1"
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/kubernetes/scheme"
@@ -558,6 +559,165 @@ func TestSearchRevisionHistory(t *testing.T) {
 		assert.Nil(t, revision)
 	})
 }
+
+func TestCountAvailablePods(t *testing.T) {
+	t.Run("returns correct count and map with multiple pods", func(t *testing.T) {
+		pods := []corev1.Pod{
+			{
+				Status: corev1.PodStatus{
+					Phase: corev1.PodRunning,
+				},
+				ObjectMeta: metav1.ObjectMeta{
+					Labels: map[string]string{
+						"revision": "1",
+					},
+				},
+			},
+			{
+				Status: corev1.PodStatus{
+					Phase: corev1.PodFailed,
+				},
+				ObjectMeta: metav1.ObjectMeta{
+					Labels: map[string]string{
+						"revision": "1",
+					},
+				},
+			},
+			{
+				Status: corev1.PodStatus{
+					Phase: corev1.PodRunning,
+				},
+				ObjectMeta: metav1.ObjectMeta{
+					Labels: map[string]string{
+						"revision": "2",
+					},
+				},
+			},
+			{
+				Status: corev1.PodStatus{
+					Phase: corev1.PodRunning,
+				},
+				ObjectMeta: metav1.ObjectMeta{
+					Labels: map[string]string{
+						"revision": "2",
+					},
+				},
+			},
+		}
+
+		podMap, count, err := countAvailablePods(pods)
+		assert.NoError(t, err)
+		assert.Equal(t, count, 3)
+		assert.Equal(t, len(podMap[1]), 1)
+		assert.Equal(t, len(podMap[2]), 2)
+	})
+
+	t.Run("returns error when pod has non-numeric revision", func(t *testing.T) {
+		pods := []corev1.Pod{
+			{
+				Status: corev1.PodStatus{
+					Phase: corev1.PodRunning,
+				},
+				ObjectMeta: metav1.ObjectMeta{
+					Labels: map[string]string{
+						"revision": "non-numeric",
+					},
+				},
+			},
+		}
+
+		_, _, err := countAvailablePods(pods)
+		if err == nil {
+			t.Fatalf("expected an error, but got none")
+		}
+
+		if err.Error() != `strconv.Atoi: parsing "non-numeric": invalid syntax` {
+			t.Errorf("expected parsing error, but got: %v", err)
+		}
+	})
+}
+
+// type MockCustomReplicaSetReconciler struct {
+// 	CustomReplicaSetReconcilerInterface
+// 	PodsCreated int
+// }
+
+// type CustomReplicaSetReconcilerInterface interface {
+// 	managePods(ctx context.Context, crs *customreplicasetv1.CustomReplicaSet, childPods corev1.PodList, podsPerRevision map[int][]*corev1.Pod, totalAvailPods int, latestRevision *v1.ControllerRevision) error
+// 	createPods(ctx context.Context, cr *customreplicasetv1.CustomReplicaSet, podsToCreate int, revision *v1.ControllerRevision) error
+// }
+
+// func (r *MockCustomReplicaSetReconciler) createPods(ctx context.Context, cr *customreplicasetv1.CustomReplicaSet, podsToCreate int, revision *v1.ControllerRevision) error {
+// 	// Your existing implementation here
+// 	fmt.Println("TEST CREATEPODS")
+// 	return nil
+// }
+
+// func TestManagePods(t *testing.T) {
+// 	t.Run("should create new pods", func(t *testing.T) {
+// 		ctx := context.Background()
+
+// 		// Mocking CustomReplicaSet
+// 		crs := &customreplicasetv1.CustomReplicaSet{
+// 			Spec: customreplicasetv1.CustomReplicaSetSpec{
+// 				Replicas:  10,
+// 				Partition: 5,
+// 			},
+// 		}
+
+// 		// Define a PodTemplateSpec
+// 		template := corev1.PodTemplateSpec{
+// 			Spec: corev1.PodSpec{
+// 				RestartPolicy: "Never",
+// 				Containers: []corev1.Container{
+// 					{
+// 						Name:    "busybox",
+// 						Image:   "busybox",
+// 						Command: []string{"sleep", "3600"},
+// 					},
+// 				},
+// 			},
+// 		}
+
+// 		// Marshal the PodTemplateSpec into JSON
+// 		templateJSON, err := json.Marshal(template)
+// 		if err != nil {
+// 			fmt.Printf("failed to marshal pod template: %v", err)
+// 		}
+
+// 		// Set the Raw data of the revision to the marshaled template JSON
+// 		latestRevision := &v1.ControllerRevision{
+// 			ObjectMeta: metav1.ObjectMeta{
+// 				Name:      "test-revision",
+// 				Namespace: crs.Namespace,
+// 				Labels: map[string]string{
+// 					"owner": crs.Name,
+// 				},
+// 			},
+// 			Data:     runtime.RawExtension{Raw: templateJSON},
+// 			Revision: 1,
+// 		}
+
+// 		// Since totalAvailPods is zero, create an empty pod list
+// 		childPods := corev1.PodList{}
+
+// 		// Mocking CustomReplicaSetReconciler and createPods method
+// 		r := &MockCustomReplicaSetReconciler{}
+
+// 		// Call the method
+// 		err = r.managePods(ctx, crs, childPods, map[int][]*corev1.Pod{}, 0, latestRevision)
+
+// 		// Check for errors
+// 		if err != nil {
+// 			t.Errorf("managePods returned an error: %v", err)
+// 		}
+
+// 		// Assert the number of pods created
+// 		if r.PodsCreated != 10 {
+// 			t.Errorf("expected 10 pods to be created, got %d", r.PodsCreated)
+// 		}
+// 	})
+// }
 
 var _ = AfterSuite(func() {
 	By("tearing down the test environment")
