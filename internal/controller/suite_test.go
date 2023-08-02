@@ -649,6 +649,66 @@ func TestCountAvailablePods(t *testing.T) {
 	})
 }
 
+func TestNewPodForCR(t *testing.T) {
+	scheme := runtime.NewScheme()
+	_ = customreplicasetv1.AddToScheme(scheme) // Register CustomReplicaSet in scheme
+	_ = corev1.AddToScheme(scheme)
+
+	r := &CustomReplicaSetReconciler{
+		Scheme: scheme,
+	}
+
+	cr := &customreplicasetv1.CustomReplicaSet{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "test-cr",
+			Namespace: "default",
+		},
+	}
+
+	revision := &v1.ControllerRevision{
+		Revision: 1,
+		Data: runtime.RawExtension{
+			Raw: []byte(`{"spec":{"containers":[{"name":"test-container","image":"test-image"}]}}`),
+		},
+	}
+
+	t.Run("returns a new pod for the given custom resource", func(t *testing.T) {
+		pod, err := r.newPodForCR(cr, revision)
+		assert.NoError(t, err)
+		if err != nil {
+			t.Fatalf("expected no error, but got: %v", err)
+		}
+
+		assert.NotEqual(t, pod, nil)
+		if pod == nil {
+			t.Fatal("expected a pod but got nil")
+		}
+
+		assert.Equal(t, pod.Namespace, cr.Namespace)
+		if pod.Namespace != cr.Namespace {
+			t.Errorf("expected namespace %s, but got: %s", cr.Namespace, pod.Namespace)
+		}
+
+		assert.Equal(t, pod.Labels["owner"], cr.Name)
+		if pod.Labels["owner"] != cr.Name {
+			t.Errorf("expected owner label %s, but got: %s", cr.Name, pod.Labels["owner"])
+		}
+
+		assert.Equal(t, pod.Labels["revision"], "1")
+		if pod.Labels["revision"] != "1" {
+			t.Errorf("expected revision label 1, but got: %s", pod.Labels["revision"])
+		}
+
+		// Validate container spec
+		assert.Equal(t, len(pod.Spec.Containers), 1)
+		assert.Equal(t, pod.Spec.Containers[0].Name, "test-container")
+		assert.Equal(t, pod.Spec.Containers[0].Image, "test-image")
+		if len(pod.Spec.Containers) != 1 || pod.Spec.Containers[0].Name != "test-container" || pod.Spec.Containers[0].Image != "test-image" {
+			t.Errorf("unexpected container spec: %v", pod.Spec.Containers)
+		}
+	})
+}
+
 // type MockCustomReplicaSetReconciler struct {
 // 	CustomReplicaSetReconcilerInterface
 // 	PodsCreated int
