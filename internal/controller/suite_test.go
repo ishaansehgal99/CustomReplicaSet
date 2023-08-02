@@ -24,6 +24,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -578,6 +579,17 @@ func TestCountAvailablePods(t *testing.T) {
 					Phase: corev1.PodFailed,
 				},
 				ObjectMeta: metav1.ObjectMeta{
+					Labels: map[string]string{
+						"revision": "1",
+					},
+				},
+			},
+			{
+				Status: corev1.PodStatus{
+					Phase: corev1.PodRunning,
+				},
+				ObjectMeta: metav1.ObjectMeta{
+					DeletionTimestamp: &metav1.Time{Time: time.Now()},
 					Labels: map[string]string{
 						"revision": "1",
 					},
