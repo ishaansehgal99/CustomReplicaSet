@@ -21,6 +21,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"testing"
@@ -709,87 +710,115 @@ func TestNewPodForCR(t *testing.T) {
 	})
 }
 
-// type MockCustomReplicaSetReconciler struct {
-// 	CustomReplicaSetReconcilerInterface
-// 	PodsCreated int
-// }
+func TestSortKeys(t *testing.T) {
+	t.Run("sorts keys in ascending order", func(t *testing.T) {
+		podsPerRevision := map[int][]*corev1.Pod{
+			3: {},
+			1: {},
+			2: {},
+		}
 
-// type CustomReplicaSetReconcilerInterface interface {
-// 	managePods(ctx context.Context, crs *customreplicasetv1.CustomReplicaSet, childPods corev1.PodList, podsPerRevision map[int][]*corev1.Pod, totalAvailPods int, latestRevision *v1.ControllerRevision) error
-// 	createPods(ctx context.Context, cr *customreplicasetv1.CustomReplicaSet, podsToCreate int, revision *v1.ControllerRevision) error
-// }
+		sortedKeys := sortKeys(podsPerRevision, false)
 
-// func (r *MockCustomReplicaSetReconciler) createPods(ctx context.Context, cr *customreplicasetv1.CustomReplicaSet, podsToCreate int, revision *v1.ControllerRevision) error {
-// 	// Your existing implementation here
-// 	fmt.Println("TEST CREATEPODS")
-// 	return nil
-// }
+		assert.Equal(t, []int{1, 2, 3}, sortedKeys)
+	})
 
-// func TestManagePods(t *testing.T) {
-// 	t.Run("should create new pods", func(t *testing.T) {
-// 		ctx := context.Background()
+	t.Run("sorts keys in descending order", func(t *testing.T) {
+		podsPerRevision := map[int][]*corev1.Pod{
+			3: {},
+			1: {},
+			2: {},
+		}
 
-// 		// Mocking CustomReplicaSet
-// 		crs := &customreplicasetv1.CustomReplicaSet{
-// 			Spec: customreplicasetv1.CustomReplicaSetSpec{
-// 				Replicas:  10,
-// 				Partition: 5,
-// 			},
-// 		}
+		sortedKeys := sortKeys(podsPerRevision, true)
 
-// 		// Define a PodTemplateSpec
-// 		template := corev1.PodTemplateSpec{
-// 			Spec: corev1.PodSpec{
-// 				RestartPolicy: "Never",
-// 				Containers: []corev1.Container{
-// 					{
-// 						Name:    "busybox",
-// 						Image:   "busybox",
-// 						Command: []string{"sleep", "3600"},
-// 					},
-// 				},
-// 			},
-// 		}
+		assert.Equal(t, []int{3, 2, 1}, sortedKeys)
+	})
 
-// 		// Marshal the PodTemplateSpec into JSON
-// 		templateJSON, err := json.Marshal(template)
-// 		if err != nil {
-// 			fmt.Printf("failed to marshal pod template: %v", err)
-// 		}
+	t.Run("returns empty slice for empty input", func(t *testing.T) {
+		podsPerRevision := map[int][]*corev1.Pod{}
 
-// 		// Set the Raw data of the revision to the marshaled template JSON
-// 		latestRevision := &v1.ControllerRevision{
-// 			ObjectMeta: metav1.ObjectMeta{
-// 				Name:      "test-revision",
-// 				Namespace: crs.Namespace,
-// 				Labels: map[string]string{
-// 					"owner": crs.Name,
-// 				},
-// 			},
-// 			Data:     runtime.RawExtension{Raw: templateJSON},
-// 			Revision: 1,
-// 		}
+		sortedKeys := sortKeys(podsPerRevision, false)
 
-// 		// Since totalAvailPods is zero, create an empty pod list
-// 		childPods := corev1.PodList{}
+		assert.True(t, sort.IntsAreSorted(sortedKeys))
+		assert.Equal(t, []int{}, sortedKeys)
+	})
+}
 
-// 		// Mocking CustomReplicaSetReconciler and createPods method
-// 		r := &MockCustomReplicaSetReconciler{}
+func TestManagePods(t *testing.T) {
+	scheme := runtime.NewScheme()
+	_ = customreplicasetv1.AddToScheme(scheme)
+	_ = v1.AddToScheme(scheme)
+	_ = corev1.AddToScheme(scheme)
+	t.Run("should create new pods", func(t *testing.T) {
+		ctx := context.Background()
 
-// 		// Call the method
-// 		err = r.managePods(ctx, crs, childPods, map[int][]*corev1.Pod{}, 0, latestRevision)
+		// Mocking CustomReplicaSet
+		crs := &customreplicasetv1.CustomReplicaSet{
+			Spec: customreplicasetv1.CustomReplicaSetSpec{
+				Replicas:  10,
+				Partition: 5,
+			},
+		}
 
-// 		// Check for errors
-// 		if err != nil {
-// 			t.Errorf("managePods returned an error: %v", err)
-// 		}
+		// Define a PodTemplateSpec
+		template := corev1.PodTemplateSpec{
+			Spec: corev1.PodSpec{
+				RestartPolicy: "Never",
+				Containers: []corev1.Container{
+					{
+						Name:    "busybox",
+						Image:   "busybox",
+						Command: []string{"sleep", "3600"},
+					},
+				},
+			},
+		}
 
-// 		// Assert the number of pods created
-// 		if r.PodsCreated != 10 {
-// 			t.Errorf("expected 10 pods to be created, got %d", r.PodsCreated)
-// 		}
-// 	})
-// }
+		// Marshal the PodTemplateSpec into JSON
+		templateJSON, err := json.Marshal(template)
+		if err != nil {
+			fmt.Printf("failed to marshal pod template: %v", err)
+		}
+
+		// Set the Raw data of the revision to the marshaled template JSON
+		latestRevision := &v1.ControllerRevision{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "test-revision",
+				Namespace: crs.Namespace,
+				Labels: map[string]string{
+					"owner": crs.Name,
+				},
+			},
+			Data:     runtime.RawExtension{Raw: templateJSON},
+			Revision: 1,
+		}
+
+		// Since totalAvailPods is zero, create an empty pod list
+		childPods := corev1.PodList{}
+
+		cl := fake.NewClientBuilder().WithScheme(scheme).WithRuntimeObjects(crs, latestRevision).Build()
+
+		r := &CustomReplicaSetReconciler{
+			Client: cl,
+			Scheme: scheme,
+		}
+
+		// Call the method
+		err = r.managePods(ctx, crs, childPods, map[int][]*corev1.Pod{}, 0, latestRevision)
+
+		// Check for errors
+		assert.NoError(t, err)
+		if err != nil {
+			t.Errorf("managePods returned an error: %v", err)
+		}
+
+		podsList := corev1.PodList{}
+		err = r.Client.List(ctx, &podsList)
+		assert.NoError(t, err)
+		assert.Equal(t, len(podsList.Items), 10)
+	})
+}
 
 var _ = AfterSuite(func() {
 	By("tearing down the test environment")
