@@ -87,7 +87,7 @@ func (r *CustomReplicaSetReconciler) Reconcile(ctx context.Context, req ctrl.Req
 		return ctrl.Result{Requeue: true}, err
 	}
 
-	if err := r.managePods(ctx, &crs, childPods, podsPerRevision, totalAvailPods, latestRevision); err != nil {
+	if err := r.managePods(ctx, &crs, podsPerRevision, totalAvailPods, latestRevision); err != nil {
 		return ctrl.Result{Requeue: true}, err
 	}
 
@@ -359,7 +359,7 @@ func (r *CustomReplicaSetReconciler) findChildPods(ctx context.Context, req ctrl
 	return childPods, nil
 }
 
-func (r *CustomReplicaSetReconciler) managePods(ctx context.Context, crs *customreplicasetv1.CustomReplicaSet, childPods corev1.PodList, podsPerRevision map[int][]*corev1.Pod, totalAvailPods int, latestRevision *v1.ControllerRevision) error {
+func (r *CustomReplicaSetReconciler) managePods(ctx context.Context, crs *customreplicasetv1.CustomReplicaSet, podsPerRevision map[int][]*corev1.Pod, totalAvailPods int, latestRevision *v1.ControllerRevision) error {
 	partitionNum := min(int(crs.Spec.Partition), int(crs.Spec.Replicas)) // Cap the partition upgrade amount by the # of replicas
 	latestPods, ok := podsPerRevision[int(latestRevision.Revision)]
 	if !ok {
@@ -390,23 +390,29 @@ func (r *CustomReplicaSetReconciler) managePods(ctx context.Context, crs *custom
 		}
 	} else if totalAvailPods > int(crs.Spec.Replicas) {
 		podsToDelete := totalAvailPods - int(crs.Spec.Replicas)
-		newPodsToDelete := max(len(latestPods)-partitionNum, 0)
-		oldPodsToDelete := podsToDelete - newPodsToDelete
+		var newPodsToDelete, oldPodsToDelete int
+		if len(podsPerRevision) == 1 {
+			newPodsToDelete = 0
+			oldPodsToDelete = podsToDelete
+		} else {
+			newPodsToDelete = max(len(latestPods)-partitionNum, 0)
+			oldPodsToDelete = podsToDelete - newPodsToDelete
+		}
 		if newPodsToDelete > 0 {
-			if err := r.deletePods(ctx, crs, newPodsToDelete, podsPerRevision, childPods, true); err != nil {
+			if err := r.deletePods(ctx, crs, newPodsToDelete, podsPerRevision, true); err != nil {
 				fmt.Println("Failed to delete pods", err)
 				return err
 			}
 		}
 		if oldPodsToDelete > 0 {
-			if err := r.deletePods(ctx, crs, oldPodsToDelete, podsPerRevision, childPods, false); err != nil {
+			if err := r.deletePods(ctx, crs, oldPodsToDelete, podsPerRevision, false); err != nil {
 				fmt.Println("Failed to delete pods", err)
 				return err
 			}
 		}
 	} else {
 		podsToUpgrade := partitionNum - len(latestPods)
-		if err := r.upgradeOrDowngradePods(ctx, crs, podsPerRevision, latestRevision, childPods, podsToUpgrade); err != nil {
+		if err := r.upgradeOrDowngradePods(ctx, crs, podsPerRevision, latestRevision, podsToUpgrade); err != nil {
 			fmt.Println("Failed to upgrade or downgrade pods", err)
 			return err
 		}
@@ -433,7 +439,7 @@ func (r *CustomReplicaSetReconciler) createPods(ctx context.Context, cr *customr
 	return nil
 }
 
-func (r *CustomReplicaSetReconciler) deletePods(ctx context.Context, cr *customreplicasetv1.CustomReplicaSet, podsToDelete int, podsPerRevision map[int][]*corev1.Pod, childPods corev1.PodList, reverse bool) error {
+func (r *CustomReplicaSetReconciler) deletePods(ctx context.Context, cr *customreplicasetv1.CustomReplicaSet, podsToDelete int, podsPerRevision map[int][]*corev1.Pod, reverse bool) error {
 	sortedKeys := sortKeys(podsPerRevision, reverse)
 	finishedDeletion := false
 
@@ -465,7 +471,7 @@ func (r *CustomReplicaSetReconciler) deletePods(ctx context.Context, cr *customr
 	return nil
 }
 
-func (r *CustomReplicaSetReconciler) upgradeOrDowngradePods(ctx context.Context, cr *customreplicasetv1.CustomReplicaSet, podsPerRevision map[int][]*corev1.Pod, latestRevision *v1.ControllerRevision, childPods corev1.PodList, podsToUpgrade int) error {
+func (r *CustomReplicaSetReconciler) upgradeOrDowngradePods(ctx context.Context, cr *customreplicasetv1.CustomReplicaSet, podsPerRevision map[int][]*corev1.Pod, latestRevision *v1.ControllerRevision, podsToUpgrade int) error {
 	// First check if we even have multiple versions
 	revList, err := r.getAllControllerRevisions(ctx, cr, false)
 	if err != nil {
@@ -473,7 +479,7 @@ func (r *CustomReplicaSetReconciler) upgradeOrDowngradePods(ctx context.Context,
 	}
 	if len(revList.Items) > 1 {
 		if podsToUpgrade > 0 {
-			if err := r.deletePods(ctx, cr, podsToUpgrade, podsPerRevision, childPods, false); err != nil {
+			if err := r.deletePods(ctx, cr, podsToUpgrade, podsPerRevision, false); err != nil {
 				fmt.Println("Unable to delete old pods", err)
 				return err
 			}
@@ -487,7 +493,7 @@ func (r *CustomReplicaSetReconciler) upgradeOrDowngradePods(ctx context.Context,
 			fmt.Printf("Upgraded %d Pods\n", podsToUpgrade)
 		} else if podsToUpgrade < 0 {
 			podsToDowngrade := podsToUpgrade * -1
-			if err := r.deletePods(ctx, cr, podsToDowngrade, podsPerRevision, childPods, true); err != nil {
+			if err := r.deletePods(ctx, cr, podsToDowngrade, podsPerRevision, true); err != nil {
 				fmt.Println("Unable to delete new pods", err)
 				return err
 			}

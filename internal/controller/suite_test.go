@@ -21,15 +21,18 @@ import (
 	"encoding/json"
 	"fmt"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	"github.com/stretchr/testify/assert"
 
 	v1 "k8s.io/api/apps/v1"
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/kubernetes/scheme"
@@ -108,10 +111,12 @@ func TestManageControllerHistory(t *testing.T) {
 			Scheme: scheme,
 		}
 
-		_, err := reconciler.manageControllerRevisionHistory(ctx, cr)
+		latestRevision, err := reconciler.manageControllerRevisionHistory(ctx, cr)
 		assert.NoError(t, err)
 		assert.True(t, strings.HasPrefix(cr.Labels["latestRevisionName"], fmt.Sprintf("%s-controller-revision-", cr.Name)))
 		assert.Equal(t, cr.Labels["latestRevisionNumber"], "1")
+		assert.True(t, strings.HasPrefix(latestRevision.Name, fmt.Sprintf("%s-controller-revision-", cr.Name)))
+		assert.Equal(t, latestRevision.Revision, int64(1))
 
 		revisionList := v1.ControllerRevisionList{}
 		err = reconciler.Client.List(ctx, &revisionList)
@@ -157,8 +162,10 @@ func TestManageControllerHistory(t *testing.T) {
 			Scheme: scheme,
 		}
 
-		_, err = reconciler.manageControllerRevisionHistory(ctx, cr)
+		latestRevision, err := reconciler.manageControllerRevisionHistory(ctx, cr)
 		assert.NoError(t, err)
+		assert.True(t, strings.HasPrefix(latestRevision.Name, fmt.Sprintf("%s-controller-revision-", cr.Name)))
+		assert.Equal(t, latestRevision.Revision, int64(1))
 
 		revisionList := v1.ControllerRevisionList{}
 		err = reconciler.Client.List(ctx, &revisionList)
@@ -373,11 +380,14 @@ func TestCreateControllerRevision(t *testing.T) {
 		}
 
 		latestRevisionNumber := 1
-		_, err := reconciler.createControllerRevision(ctx, cr, controllerRevList, revisionData, int64(latestRevisionNumber))
+		latestRevision, err := reconciler.createControllerRevision(ctx, cr, controllerRevList, revisionData, int64(latestRevisionNumber))
 
 		assert.NoError(t, err)
 		assert.True(t, strings.HasPrefix(cr.Labels["latestRevisionName"], fmt.Sprintf("%s-controller-revision-", cr.Name)))
 		assert.Equal(t, cr.Labels["latestRevisionNumber"], "2")
+
+		assert.True(t, strings.HasPrefix(latestRevision.Name, fmt.Sprintf("%s-controller-revision-", cr.Name)))
+		assert.Equal(t, latestRevision.Revision, int64(2))
 
 		revisionList := v1.ControllerRevisionList{}
 		err = reconciler.Client.List(ctx, &revisionList)
@@ -414,10 +424,13 @@ func TestCreateControllerRevision(t *testing.T) {
 		}
 
 		revisionNum := 5
-		_, err := reconciler.createControllerRevision(ctx, cr, controllerRevList, revisionData, int64(revisionNum))
+		latestRevision, err := reconciler.createControllerRevision(ctx, cr, controllerRevList, revisionData, int64(revisionNum))
 		assert.NoError(t, err)
 		assert.True(t, strings.HasPrefix(cr.Labels["latestRevisionName"], fmt.Sprintf("%s-controller-revision-", cr.Name)))
 		assert.Equal(t, cr.Labels["latestRevisionNumber"], "6")
+
+		assert.True(t, strings.HasPrefix(latestRevision.Name, fmt.Sprintf("%s-controller-revision-", cr.Name)))
+		assert.Equal(t, latestRevision.Revision, int64(6))
 
 		revisionList := &v1.ControllerRevisionList{}
 		err = reconciler.Client.List(ctx, revisionList)
@@ -425,10 +438,13 @@ func TestCreateControllerRevision(t *testing.T) {
 		assert.Equal(t, len(revisionList.Items), 1)
 
 		revisionNum = 6
-		_, err = reconciler.createControllerRevision(ctx, cr, revisionList, revisionData, int64(revisionNum))
+		latestRevision, err = reconciler.createControllerRevision(ctx, cr, revisionList, revisionData, int64(revisionNum))
 		assert.NoError(t, err)
 		assert.True(t, strings.HasPrefix(cr.Labels["latestRevisionName"], fmt.Sprintf("%s-controller-revision-", cr.Name)))
 		assert.Equal(t, cr.Labels["latestRevisionNumber"], "7")
+
+		assert.True(t, strings.HasPrefix(latestRevision.Name, fmt.Sprintf("%s-controller-revision-", cr.Name)))
+		assert.Equal(t, latestRevision.Revision, int64(7))
 
 		revisionList = &v1.ControllerRevisionList{}
 		err = reconciler.Client.List(ctx, revisionList)
@@ -543,6 +559,502 @@ func TestSearchRevisionHistory(t *testing.T) {
 		revision, err := searchRevisionHistory(controllerRevList, "nonexistenthash")
 		assert.NoError(t, err)
 		assert.Nil(t, revision)
+	})
+}
+
+func TestCountAvailablePods(t *testing.T) {
+	t.Run("returns correct count and map with multiple pods", func(t *testing.T) {
+		pods := []corev1.Pod{
+			{
+				Status: corev1.PodStatus{
+					Phase: corev1.PodRunning,
+				},
+				ObjectMeta: metav1.ObjectMeta{
+					Labels: map[string]string{
+						"revision": "1",
+					},
+				},
+			},
+			{
+				Status: corev1.PodStatus{
+					Phase: corev1.PodFailed,
+				},
+				ObjectMeta: metav1.ObjectMeta{
+					Labels: map[string]string{
+						"revision": "1",
+					},
+				},
+			},
+			{
+				Status: corev1.PodStatus{
+					Phase: corev1.PodRunning,
+				},
+				ObjectMeta: metav1.ObjectMeta{
+					DeletionTimestamp: &metav1.Time{Time: time.Now()},
+					Labels: map[string]string{
+						"revision": "1",
+					},
+				},
+			},
+			{
+				Status: corev1.PodStatus{
+					Phase: corev1.PodRunning,
+				},
+				ObjectMeta: metav1.ObjectMeta{
+					Labels: map[string]string{
+						"revision": "2",
+					},
+				},
+			},
+			{
+				Status: corev1.PodStatus{
+					Phase: corev1.PodRunning,
+				},
+				ObjectMeta: metav1.ObjectMeta{
+					Labels: map[string]string{
+						"revision": "2",
+					},
+				},
+			},
+		}
+
+		podMap, count, err := countAvailablePods(pods)
+		assert.NoError(t, err)
+		assert.Equal(t, count, 3)
+		assert.Equal(t, len(podMap[1]), 1)
+		assert.Equal(t, len(podMap[2]), 2)
+	})
+
+	t.Run("returns error when pod has non-numeric revision", func(t *testing.T) {
+		pods := []corev1.Pod{
+			{
+				Status: corev1.PodStatus{
+					Phase: corev1.PodRunning,
+				},
+				ObjectMeta: metav1.ObjectMeta{
+					Labels: map[string]string{
+						"revision": "non-numeric",
+					},
+				},
+			},
+		}
+
+		_, _, err := countAvailablePods(pods)
+		if err == nil {
+			t.Fatalf("expected an error, but got none")
+		}
+
+		if err.Error() != `strconv.Atoi: parsing "non-numeric": invalid syntax` {
+			t.Errorf("expected parsing error, but got: %v", err)
+		}
+	})
+}
+
+func TestNewPodForCR(t *testing.T) {
+	scheme := runtime.NewScheme()
+	_ = customreplicasetv1.AddToScheme(scheme) // Register CustomReplicaSet in scheme
+	_ = corev1.AddToScheme(scheme)
+
+	r := &CustomReplicaSetReconciler{
+		Scheme: scheme,
+	}
+
+	cr := &customreplicasetv1.CustomReplicaSet{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "test-cr",
+			Namespace: "default",
+		},
+	}
+
+	revision := &v1.ControllerRevision{
+		Revision: 1,
+		Data: runtime.RawExtension{
+			Raw: []byte(`{"spec":{"containers":[{"name":"test-container","image":"test-image"}]}}`),
+		},
+	}
+
+	t.Run("returns a new pod for the given custom resource", func(t *testing.T) {
+		pod, err := r.newPodForCR(cr, revision)
+		assert.NoError(t, err)
+		if err != nil {
+			t.Fatalf("expected no error, but got: %v", err)
+		}
+
+		assert.NotEqual(t, pod, nil)
+		if pod == nil {
+			t.Fatal("expected a pod but got nil")
+		}
+
+		assert.Equal(t, pod.Namespace, cr.Namespace)
+		if pod.Namespace != cr.Namespace {
+			t.Errorf("expected namespace %s, but got: %s", cr.Namespace, pod.Namespace)
+		}
+
+		assert.Equal(t, pod.Labels["owner"], cr.Name)
+		if pod.Labels["owner"] != cr.Name {
+			t.Errorf("expected owner label %s, but got: %s", cr.Name, pod.Labels["owner"])
+		}
+
+		assert.Equal(t, pod.Labels["revision"], "1")
+		if pod.Labels["revision"] != "1" {
+			t.Errorf("expected revision label 1, but got: %s", pod.Labels["revision"])
+		}
+
+		// Validate container spec
+		assert.Equal(t, len(pod.Spec.Containers), 1)
+		assert.Equal(t, pod.Spec.Containers[0].Name, "test-container")
+		assert.Equal(t, pod.Spec.Containers[0].Image, "test-image")
+		if len(pod.Spec.Containers) != 1 || pod.Spec.Containers[0].Name != "test-container" || pod.Spec.Containers[0].Image != "test-image" {
+			t.Errorf("unexpected container spec: %v", pod.Spec.Containers)
+		}
+	})
+}
+
+func TestSortKeys(t *testing.T) {
+	t.Run("sorts keys in ascending order", func(t *testing.T) {
+		podsPerRevision := map[int][]*corev1.Pod{
+			3: {},
+			1: {},
+			2: {},
+		}
+
+		sortedKeys := sortKeys(podsPerRevision, false)
+
+		assert.Equal(t, []int{1, 2, 3}, sortedKeys)
+	})
+
+	t.Run("sorts keys in descending order", func(t *testing.T) {
+		podsPerRevision := map[int][]*corev1.Pod{
+			3: {},
+			1: {},
+			2: {},
+		}
+
+		sortedKeys := sortKeys(podsPerRevision, true)
+
+		assert.Equal(t, []int{3, 2, 1}, sortedKeys)
+	})
+
+	t.Run("returns empty slice for empty input", func(t *testing.T) {
+		podsPerRevision := map[int][]*corev1.Pod{}
+
+		sortedKeys := sortKeys(podsPerRevision, false)
+
+		assert.True(t, sort.IntsAreSorted(sortedKeys))
+		assert.Equal(t, []int{}, sortedKeys)
+	})
+}
+
+func TestManagePods(t *testing.T) {
+	scheme := runtime.NewScheme()
+	_ = customreplicasetv1.AddToScheme(scheme)
+	_ = v1.AddToScheme(scheme)
+	_ = corev1.AddToScheme(scheme)
+
+	ctx := context.Background()
+
+	crs := &customreplicasetv1.CustomReplicaSet{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "test-crs",
+			Namespace: "default",
+		},
+		Spec: customreplicasetv1.CustomReplicaSetSpec{
+			Replicas:  10,
+			Partition: 5,
+		},
+	}
+
+	revisionData := runtime.RawExtension{
+		Raw: []byte(`{"foo":"bar"}`),
+	}
+
+	// Set the Raw data of the revision to the marshaled template JSON
+	latestRevision := &v1.ControllerRevision{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "test-revision",
+			Namespace: crs.Namespace,
+			Labels: map[string]string{
+				"owner": crs.Name,
+			},
+		},
+		Data:     revisionData,
+		Revision: 1,
+	}
+
+	t.Run("should create new pods", func(t *testing.T) {
+		cl := fake.NewClientBuilder().WithScheme(scheme).WithRuntimeObjects(crs, latestRevision).Build()
+
+		r := &CustomReplicaSetReconciler{
+			Client: cl,
+			Scheme: scheme,
+		}
+
+		// Call the method
+		err := r.managePods(ctx, crs, map[int][]*corev1.Pod{}, 0, latestRevision)
+
+		// Check for errors
+		assert.NoError(t, err)
+		if err != nil {
+			t.Errorf("managePods returned an error: %v", err)
+		}
+
+		podsList := corev1.PodList{}
+		err = r.Client.List(ctx, &podsList)
+		assert.NoError(t, err)
+		assert.Equal(t, len(podsList.Items), 10)
+	})
+
+	t.Run("should delete existing pods", func(t *testing.T) {
+		cl := fake.NewClientBuilder().WithScheme(scheme).WithRuntimeObjects(crs, latestRevision).Build()
+
+		r := &CustomReplicaSetReconciler{
+			Client: cl,
+			Scheme: scheme,
+		}
+
+		// Create 10 Pods
+		for i := 0; i < 10; i++ {
+			pod := &corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      fmt.Sprintf("pod-%d", i),
+					Namespace: crs.Namespace,
+					Labels: map[string]string{
+						"owner":    crs.Name,
+						"revision": "1",
+					},
+				},
+				Status: corev1.PodStatus{
+					Phase: corev1.PodRunning,
+				},
+			}
+			err := r.Client.Create(ctx, pod)
+			assert.NoError(t, err)
+		}
+
+		// Ensure we are starting with 10 Pods
+		podsList := corev1.PodList{}
+		err := r.Client.List(ctx, &podsList)
+		assert.NoError(t, err)
+		assert.Equal(t, len(podsList.Items), 10)
+
+		podsPerRevision := make(map[int][]*corev1.Pod)
+		podsPerRevision[1] = []*corev1.Pod{}
+		for i := range podsList.Items {
+			podsPerRevision[1] = append(podsPerRevision[1], &podsList.Items[i])
+		}
+
+		crs.Spec.Replicas = 7
+		err = r.Client.Update(ctx, crs) // update the CustomReplicaSet
+		assert.NoError(t, err)
+
+		// Call the method
+		err = r.managePods(ctx, crs, podsPerRevision, 10, latestRevision)
+		assert.NoError(t, err)
+
+		podsList = corev1.PodList{}
+		err = r.Client.List(ctx, &podsList)
+		assert.NoError(t, err)
+		assert.Equal(t, len(podsList.Items), 7)
+	})
+
+	t.Run("should not upgrade or downgrade any pods", func(t *testing.T) {
+		crs.Spec.Replicas = 10
+		cl := fake.NewClientBuilder().WithScheme(scheme).WithRuntimeObjects(crs, latestRevision).Build()
+
+		r := &CustomReplicaSetReconciler{
+			Client: cl,
+			Scheme: scheme,
+		}
+
+		// Create 10 Pods
+		for i := 0; i < 10; i++ {
+			pod := &corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      fmt.Sprintf("pod-%d", i),
+					Namespace: crs.Namespace,
+					Labels: map[string]string{
+						"owner":    crs.Name,
+						"revision": "1",
+					},
+				},
+				Status: corev1.PodStatus{
+					Phase: corev1.PodRunning,
+				},
+			}
+			err := r.Client.Create(ctx, pod)
+			assert.NoError(t, err)
+		}
+
+		// Ensure we are starting with 10 Pods
+		podsList := corev1.PodList{}
+		err := r.Client.List(ctx, &podsList)
+		assert.NoError(t, err)
+		assert.Equal(t, len(podsList.Items), 10)
+
+		podsPerRevision := make(map[int][]*corev1.Pod)
+		podsPerRevision[1] = []*corev1.Pod{}
+		for i := range podsList.Items {
+			podsPerRevision[1] = append(podsPerRevision[1], &podsList.Items[i])
+		}
+
+		// Call the method
+		err = r.managePods(ctx, crs, podsPerRevision, 10, latestRevision)
+		assert.NoError(t, err)
+
+		podsList = corev1.PodList{}
+		err = r.Client.List(ctx, &podsList)
+		assert.NoError(t, err)
+		assert.Equal(t, len(podsList.Items), 10)
+	})
+
+	t.Run("should upgrade pods", func(t *testing.T) {
+		crs.Spec.Partition = 5
+		crs.Spec.Replicas = 10
+
+		oldRevision := *latestRevision
+		oldRevision.ObjectMeta.Name = "test-revision-old"
+		oldRevision.Revision = 9
+
+		latestRevision.Revision = 10
+		cl := fake.NewClientBuilder().WithScheme(scheme).WithRuntimeObjects(crs, &oldRevision, latestRevision).Build()
+
+		r := &CustomReplicaSetReconciler{
+			Client: cl,
+			Scheme: scheme,
+		}
+
+		for i := 0; i < 10; i++ {
+			pod := &corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      fmt.Sprintf("%d", i+1),
+					Namespace: crs.Namespace,
+					Labels: map[string]string{
+						"owner":    crs.Name,
+						"revision": fmt.Sprintf("%d", i+1),
+					},
+				},
+				Status: corev1.PodStatus{
+					Phase: corev1.PodRunning,
+				},
+			}
+			err := r.Client.Create(ctx, pod)
+			assert.NoError(t, err)
+		}
+
+		// Ensure we are starting with 10 Pods
+		podsList := corev1.PodList{}
+		err := r.Client.List(ctx, &podsList)
+		assert.NoError(t, err)
+		assert.Equal(t, len(podsList.Items), 10)
+
+		podsPerRevision := make(map[int][]*corev1.Pod)
+
+		for i := range podsList.Items {
+			pod := podsList.Items[i]
+			podNum, err := strconv.Atoi(pod.Name)
+			assert.NoError(t, err)
+			podsPerRevision[podNum] = []*corev1.Pod{}
+			podsPerRevision[podNum] = append(podsPerRevision[podNum], &pod)
+		}
+
+		// Call the method
+		err = r.managePods(ctx, crs, podsPerRevision, 10, latestRevision)
+		assert.NoError(t, err)
+
+		podsList = corev1.PodList{}
+		err = r.Client.List(ctx, &podsList)
+		assert.NoError(t, err)
+		assert.Equal(t, len(podsList.Items), 10)
+
+		podsCountPerRevision := make(map[string]int)
+		for _, pod := range podsList.Items {
+			podsCountPerRevision[pod.Labels["revision"]]++
+		}
+		// Ensure the oldest five pods were upgraded to the newest revision
+		for i := 1; i < 11; i++ {
+			if i < 5 {
+				assert.Equal(t, podsCountPerRevision[strconv.Itoa(i)], 0)
+			} else if i < 10 {
+				assert.Equal(t, podsCountPerRevision[strconv.Itoa(i)], 1)
+			} else {
+				assert.Equal(t, podsCountPerRevision[strconv.Itoa(i)], 5)
+			}
+		}
+	})
+
+	t.Run("should downgrade pods", func(t *testing.T) {
+		crs.Spec.Partition = 0
+		crs.Spec.Replicas = 10
+
+		oldRevision := *latestRevision
+		oldRevision.ObjectMeta.Name = "test-revision-old"
+		oldRevision.Revision = 9
+
+		latestRevision.Revision = 10
+		cl := fake.NewClientBuilder().WithScheme(scheme).WithRuntimeObjects(crs, &oldRevision, latestRevision).Build()
+
+		r := &CustomReplicaSetReconciler{
+			Client: cl,
+			Scheme: scheme,
+		}
+
+		for i := 0; i < 10; i++ {
+			pod := &corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      fmt.Sprintf("%d", i+1),
+					Namespace: crs.Namespace,
+					Labels: map[string]string{
+						"owner":    crs.Name,
+						"revision": fmt.Sprintf("%d", i+1),
+					},
+				},
+				Status: corev1.PodStatus{
+					Phase: corev1.PodRunning,
+				},
+			}
+			err := r.Client.Create(ctx, pod)
+			assert.NoError(t, err)
+		}
+
+		// Ensure we are starting with 10 Pods
+		podsList := corev1.PodList{}
+		err := r.Client.List(ctx, &podsList)
+		assert.NoError(t, err)
+		assert.Equal(t, len(podsList.Items), 10)
+
+		podsPerRevision := make(map[int][]*corev1.Pod)
+
+		for i := range podsList.Items {
+			pod := podsList.Items[i]
+			podNum, err := strconv.Atoi(pod.Name)
+			assert.NoError(t, err)
+			podsPerRevision[podNum] = []*corev1.Pod{}
+			podsPerRevision[podNum] = append(podsPerRevision[podNum], &pod)
+		}
+
+		// Call the method
+		err = r.managePods(ctx, crs, podsPerRevision, 10, latestRevision)
+		assert.NoError(t, err)
+
+		podsList = corev1.PodList{}
+		err = r.Client.List(ctx, &podsList)
+		assert.NoError(t, err)
+		assert.Equal(t, len(podsList.Items), 10)
+
+		podsCountPerRevision := make(map[string]int)
+		for _, pod := range podsList.Items {
+			podsCountPerRevision[pod.Labels["revision"]]++
+		}
+		// Ensure the oldest five pods were upgraded to the newest revision
+		for i := 1; i < 11; i++ {
+			if i < 9 {
+				assert.Equal(t, podsCountPerRevision[strconv.Itoa(i)], 1)
+			} else if i < 10 {
+				assert.Equal(t, podsCountPerRevision[strconv.Itoa(i)], 2)
+			} else {
+				assert.Equal(t, podsCountPerRevision[strconv.Itoa(i)], 0)
+			}
+		}
 	})
 }
 
