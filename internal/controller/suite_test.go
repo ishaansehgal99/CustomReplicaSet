@@ -750,53 +750,38 @@ func TestManagePods(t *testing.T) {
 	_ = customreplicasetv1.AddToScheme(scheme)
 	_ = v1.AddToScheme(scheme)
 	_ = corev1.AddToScheme(scheme)
+
+	ctx := context.Background()
+
+	crs := &customreplicasetv1.CustomReplicaSet{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "test-crs",
+			Namespace: "default",
+		},
+		Spec: customreplicasetv1.CustomReplicaSetSpec{
+			Replicas:  10,
+			Partition: 5,
+		},
+	}
+
+	revisionData := runtime.RawExtension{
+		Raw: []byte(`{"foo":"bar"}`),
+	}
+
+	// Set the Raw data of the revision to the marshaled template JSON
+	latestRevision := &v1.ControllerRevision{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "test-revision",
+			Namespace: crs.Namespace,
+			Labels: map[string]string{
+				"owner": crs.Name,
+			},
+		},
+		Data:     revisionData,
+		Revision: 1,
+	}
+
 	t.Run("should create new pods", func(t *testing.T) {
-		ctx := context.Background()
-
-		// Mocking CustomReplicaSet
-		crs := &customreplicasetv1.CustomReplicaSet{
-			Spec: customreplicasetv1.CustomReplicaSetSpec{
-				Replicas:  10,
-				Partition: 5,
-			},
-		}
-
-		// Define a PodTemplateSpec
-		template := corev1.PodTemplateSpec{
-			Spec: corev1.PodSpec{
-				RestartPolicy: "Never",
-				Containers: []corev1.Container{
-					{
-						Name:    "busybox",
-						Image:   "busybox",
-						Command: []string{"sleep", "3600"},
-					},
-				},
-			},
-		}
-
-		// Marshal the PodTemplateSpec into JSON
-		templateJSON, err := json.Marshal(template)
-		if err != nil {
-			fmt.Printf("failed to marshal pod template: %v", err)
-		}
-
-		// Set the Raw data of the revision to the marshaled template JSON
-		latestRevision := &v1.ControllerRevision{
-			ObjectMeta: metav1.ObjectMeta{
-				Name:      "test-revision",
-				Namespace: crs.Namespace,
-				Labels: map[string]string{
-					"owner": crs.Name,
-				},
-			},
-			Data:     runtime.RawExtension{Raw: templateJSON},
-			Revision: 1,
-		}
-
-		// Since totalAvailPods is zero, create an empty pod list
-		childPods := corev1.PodList{}
-
 		cl := fake.NewClientBuilder().WithScheme(scheme).WithRuntimeObjects(crs, latestRevision).Build()
 
 		r := &CustomReplicaSetReconciler{
@@ -805,7 +790,7 @@ func TestManagePods(t *testing.T) {
 		}
 
 		// Call the method
-		err = r.managePods(ctx, crs, childPods, map[int][]*corev1.Pod{}, 0, latestRevision)
+		err := r.managePods(ctx, crs, map[int][]*corev1.Pod{}, 0, latestRevision)
 
 		// Check for errors
 		assert.NoError(t, err)
@@ -817,6 +802,259 @@ func TestManagePods(t *testing.T) {
 		err = r.Client.List(ctx, &podsList)
 		assert.NoError(t, err)
 		assert.Equal(t, len(podsList.Items), 10)
+	})
+
+	t.Run("should delete existing pods", func(t *testing.T) {
+		cl := fake.NewClientBuilder().WithScheme(scheme).WithRuntimeObjects(crs, latestRevision).Build()
+
+		r := &CustomReplicaSetReconciler{
+			Client: cl,
+			Scheme: scheme,
+		}
+
+		// Create 10 Pods
+		for i := 0; i < 10; i++ {
+			pod := &corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      fmt.Sprintf("pod-%d", i),
+					Namespace: crs.Namespace,
+					Labels: map[string]string{
+						"owner":    crs.Name,
+						"revision": "1",
+					},
+				},
+				Status: corev1.PodStatus{
+					Phase: corev1.PodRunning,
+				},
+			}
+			err := r.Client.Create(ctx, pod)
+			assert.NoError(t, err)
+		}
+
+		// Ensure we are starting with 10 Pods
+		podsList := corev1.PodList{}
+		err := r.Client.List(ctx, &podsList)
+		assert.NoError(t, err)
+		assert.Equal(t, len(podsList.Items), 10)
+
+		podsPerRevision := make(map[int][]*corev1.Pod)
+		podsPerRevision[1] = []*corev1.Pod{}
+		for i := range podsList.Items {
+			podsPerRevision[1] = append(podsPerRevision[1], &podsList.Items[i])
+		}
+
+		crs.Spec.Replicas = 7
+		err = r.Client.Update(ctx, crs) // update the CustomReplicaSet
+		assert.NoError(t, err)
+
+		// Call the method
+		err = r.managePods(ctx, crs, podsPerRevision, 10, latestRevision)
+		assert.NoError(t, err)
+
+		podsList = corev1.PodList{}
+		err = r.Client.List(ctx, &podsList)
+		assert.NoError(t, err)
+		assert.Equal(t, len(podsList.Items), 7)
+	})
+
+	t.Run("should not upgrade or downgrade any pods", func(t *testing.T) {
+		crs.Spec.Replicas = 10
+		cl := fake.NewClientBuilder().WithScheme(scheme).WithRuntimeObjects(crs, latestRevision).Build()
+
+		r := &CustomReplicaSetReconciler{
+			Client: cl,
+			Scheme: scheme,
+		}
+
+		// Create 10 Pods
+		for i := 0; i < 10; i++ {
+			pod := &corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      fmt.Sprintf("pod-%d", i),
+					Namespace: crs.Namespace,
+					Labels: map[string]string{
+						"owner":    crs.Name,
+						"revision": "1",
+					},
+				},
+				Status: corev1.PodStatus{
+					Phase: corev1.PodRunning,
+				},
+			}
+			err := r.Client.Create(ctx, pod)
+			assert.NoError(t, err)
+		}
+
+		// Ensure we are starting with 10 Pods
+		podsList := corev1.PodList{}
+		err := r.Client.List(ctx, &podsList)
+		assert.NoError(t, err)
+		assert.Equal(t, len(podsList.Items), 10)
+
+		podsPerRevision := make(map[int][]*corev1.Pod)
+		podsPerRevision[1] = []*corev1.Pod{}
+		for i := range podsList.Items {
+			podsPerRevision[1] = append(podsPerRevision[1], &podsList.Items[i])
+		}
+
+		// Call the method
+		err = r.managePods(ctx, crs, podsPerRevision, 10, latestRevision)
+		assert.NoError(t, err)
+
+		podsList = corev1.PodList{}
+		err = r.Client.List(ctx, &podsList)
+		assert.NoError(t, err)
+		assert.Equal(t, len(podsList.Items), 10)
+	})
+
+	t.Run("should upgrade pods", func(t *testing.T) {
+		crs.Spec.Partition = 5
+		crs.Spec.Replicas = 10
+
+		oldRevision := *latestRevision
+		oldRevision.ObjectMeta.Name = "test-revision-old"
+		oldRevision.Revision = 9
+
+		latestRevision.Revision = 10
+		cl := fake.NewClientBuilder().WithScheme(scheme).WithRuntimeObjects(crs, &oldRevision, latestRevision).Build()
+
+		r := &CustomReplicaSetReconciler{
+			Client: cl,
+			Scheme: scheme,
+		}
+
+		for i := 0; i < 10; i++ {
+			pod := &corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      fmt.Sprintf("%d", i+1),
+					Namespace: crs.Namespace,
+					Labels: map[string]string{
+						"owner":    crs.Name,
+						"revision": fmt.Sprintf("%d", i+1),
+					},
+				},
+				Status: corev1.PodStatus{
+					Phase: corev1.PodRunning,
+				},
+			}
+			err := r.Client.Create(ctx, pod)
+			assert.NoError(t, err)
+		}
+
+		// Ensure we are starting with 10 Pods
+		podsList := corev1.PodList{}
+		err := r.Client.List(ctx, &podsList)
+		assert.NoError(t, err)
+		assert.Equal(t, len(podsList.Items), 10)
+
+		podsPerRevision := make(map[int][]*corev1.Pod)
+
+		for i := range podsList.Items {
+			pod := podsList.Items[i]
+			podNum, err := strconv.Atoi(pod.Name)
+			assert.NoError(t, err)
+			podsPerRevision[podNum] = []*corev1.Pod{}
+			podsPerRevision[podNum] = append(podsPerRevision[podNum], &pod)
+		}
+
+		// Call the method
+		err = r.managePods(ctx, crs, podsPerRevision, 10, latestRevision)
+		assert.NoError(t, err)
+
+		podsList = corev1.PodList{}
+		err = r.Client.List(ctx, &podsList)
+		assert.NoError(t, err)
+		assert.Equal(t, len(podsList.Items), 10)
+
+		podsCountPerRevision := make(map[string]int)
+		for _, pod := range podsList.Items {
+			podsCountPerRevision[pod.Labels["revision"]]++
+		}
+		// Ensure the oldest five pods were upgraded to the newest revision
+		for i := 1; i < 11; i++ {
+			if i < 5 {
+				assert.Equal(t, podsCountPerRevision[strconv.Itoa(i)], 0)
+			} else if i < 10 {
+				assert.Equal(t, podsCountPerRevision[strconv.Itoa(i)], 1)
+			} else {
+				assert.Equal(t, podsCountPerRevision[strconv.Itoa(i)], 5)
+			}
+		}
+	})
+
+	t.Run("should downgrade pods", func(t *testing.T) {
+		crs.Spec.Partition = 0
+		crs.Spec.Replicas = 10
+
+		oldRevision := *latestRevision
+		oldRevision.ObjectMeta.Name = "test-revision-old"
+		oldRevision.Revision = 9
+
+		latestRevision.Revision = 10
+		cl := fake.NewClientBuilder().WithScheme(scheme).WithRuntimeObjects(crs, &oldRevision, latestRevision).Build()
+
+		r := &CustomReplicaSetReconciler{
+			Client: cl,
+			Scheme: scheme,
+		}
+
+		for i := 0; i < 10; i++ {
+			pod := &corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      fmt.Sprintf("%d", i+1),
+					Namespace: crs.Namespace,
+					Labels: map[string]string{
+						"owner":    crs.Name,
+						"revision": fmt.Sprintf("%d", i+1),
+					},
+				},
+				Status: corev1.PodStatus{
+					Phase: corev1.PodRunning,
+				},
+			}
+			err := r.Client.Create(ctx, pod)
+			assert.NoError(t, err)
+		}
+
+		// Ensure we are starting with 10 Pods
+		podsList := corev1.PodList{}
+		err := r.Client.List(ctx, &podsList)
+		assert.NoError(t, err)
+		assert.Equal(t, len(podsList.Items), 10)
+
+		podsPerRevision := make(map[int][]*corev1.Pod)
+
+		for i := range podsList.Items {
+			pod := podsList.Items[i]
+			podNum, err := strconv.Atoi(pod.Name)
+			assert.NoError(t, err)
+			podsPerRevision[podNum] = []*corev1.Pod{}
+			podsPerRevision[podNum] = append(podsPerRevision[podNum], &pod)
+		}
+
+		// Call the method
+		err = r.managePods(ctx, crs, podsPerRevision, 10, latestRevision)
+		assert.NoError(t, err)
+
+		podsList = corev1.PodList{}
+		err = r.Client.List(ctx, &podsList)
+		assert.NoError(t, err)
+		assert.Equal(t, len(podsList.Items), 10)
+
+		podsCountPerRevision := make(map[string]int)
+		for _, pod := range podsList.Items {
+			podsCountPerRevision[pod.Labels["revision"]]++
+		}
+		// Ensure the oldest five pods were upgraded to the newest revision
+		for i := 1; i < 11; i++ {
+			if i < 9 {
+				assert.Equal(t, podsCountPerRevision[strconv.Itoa(i)], 1)
+			} else if i < 10 {
+				assert.Equal(t, podsCountPerRevision[strconv.Itoa(i)], 2)
+			} else {
+				assert.Equal(t, podsCountPerRevision[strconv.Itoa(i)], 0)
+			}
+		}
 	})
 }
 
