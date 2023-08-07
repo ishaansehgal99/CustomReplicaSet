@@ -562,7 +562,13 @@ func countAvailablePods(pods []corev1.Pod) (map[int][]*corev1.Pod, int, error) {
 				// Pod is already being deleted, skip to the next one
 				continue
 			}
-			revision, err := strconv.Atoi(pod.Labels["revision"])
+
+			revisionStr, ok := pod.Labels["revision"]
+			if !ok {
+				continue
+			}
+
+			revision, err := strconv.Atoi(revisionStr)
 			if err != nil {
 				return nil, 0, err
 			}
