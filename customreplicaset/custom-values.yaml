@@ -1,0 +1,19 @@
+# custom-values.yaml
+# Use following command to update customreplicaset
+# helm upgrade my-customreplicaset ./customreplicaset -f custom-values.yaml
+apiVersion: customreplicaset.ishaan.microsoft/v1
+kind: CustomReplicaSet
+metadata: 
+  name: customreplicaset-sample
+spec: 
+  replicas: 10
+  template:
+    spec:
+      restartPolicy: Never
+      containers:
+      - name: busybox
+        image: "busybox"
+        command: ["sleep", "3800"]
+  partition: 6  # Number of upgraded pods
+  revisionHistoryLimit: 20 # Max revision history stored
+
