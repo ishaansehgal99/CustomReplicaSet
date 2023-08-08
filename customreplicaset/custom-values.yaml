@@ -1,6 +1,6 @@
 # custom-values.yaml
 # Use following command to update customreplicaset
-# helm upgrade my-customreplicaset ./customreplicaset -f custom-values.yaml
+# helm upgrade customreplicaset ./customreplicaset -f ./customreplicaset/custom-values.yaml
 apiVersion: customreplicaset.ishaan.microsoft/v1
 kind: CustomReplicaSet
 metadata: 
